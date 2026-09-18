@@ -1,0 +1,296 @@
+/* ============================================================
+   几何任务栏小插件 · style.css
+   阶段一：模拟任务栏演示页。
+   .band 段即未来的半透明覆盖窗口（1600×48）。
+   彭罗斯三角关键帧完整复刻几何岛屿 style.css:1509+。
+   ============================================================ */
+
+:root {
+  --blue-200: #b8d4f0;
+  --blue-500: #6b95c8;
+  --desktop-0: #10141f;
+  --desktop-1: #1a2130;
+  --desktop-2: #232c40;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+}
+
+body {
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+  background:
+    radial-gradient(ellipse at 20% -10%, var(--desktop-2) 0%, transparent 55%),
+    linear-gradient(160deg, var(--desktop-0) 0%, var(--desktop-1) 60%, var(--desktop-2) 100%);
+  color: #cdd6e4;
+  overflow-x: hidden;
+}
+
+/* ---- 顶部说明与演示控制 ---- */
+.demo-head {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 26px 20px 10px;
+}
+.demo-head h1 {
+  font-size: 19px;
+  font-weight: 600;
+  margin: 0 0 6px;
+  letter-spacing: 0.5px;
+}
+.demo-head p {
+  font-size: 13px;
+  color: #8794a8;
+  margin: 0 0 14px;
+  line-height: 1.7;
+}
+.demo-head p b { color: #b8c4d8; font-weight: 600; }
+
+.controls {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.controls button {
+  font: inherit;
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.05);
+  color: #aab6c8;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.controls button:hover { background: rgba(255,255,255,0.10); color: #dfe7f2; }
+.controls button.active {
+  background: rgba(115,170,225,0.22);
+  border-color: rgba(115,170,225,0.55);
+  color: #d8e6f5;
+}
+
+/* ---- 舞台：模拟桌面 ---- */
+.stage {
+  display: flex;
+  justify-content: center;
+  align-items: flex-end;
+  min-height: calc(100vh - 190px);
+  padding: 20px 12px 26px;
+}
+
+.band-outer { position: relative; }
+
+/* 模拟任务栏段 = 未来的半透明覆盖窗口 */
+.band {
+  width: 1600px;
+  height: 48px;
+  position: relative;
+  border-radius: 8px;
+  background: rgba(38, 41, 54, 0.88);
+  border: 1px solid rgba(255,255,255,0.09);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45);
+  overflow: hidden;
+  transform-origin: top left;
+}
+
+.band canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* ---- 模拟任务栏中间内容（仅为演示遮挡参考，可无视）---- */
+.fake-center {
+  position: absolute;
+  left: 566px;
+  width: 477px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.fake-search {
+  width: 180px;
+  height: 30px;
+  border-radius: 15px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06);
+  font-size: 12px;
+  color: #77808f;
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 7px;
+}
+.fake-icons { display: flex; gap: 8px; margin-left: 6px; }
+.fake-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.fake-icon.underline { position: relative; }
+.fake-icon.underline::after {
+  content: "";
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 12px;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(140,180,225,0.7);
+}
+
+.fake-clock {
+  position: absolute;
+  right: 14px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #aab4c4;
+  text-align: right;
+  pointer-events: none;
+}
+
+/* ---- 成就区（DOM 层，位于带内 x 378–546；= zone.x 78 + 喷泉区 300）---- */
+.achv {
+  position: absolute;
+  left: 378px;
+  width: 168px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+}
+.achv-badges {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 25px;
+}
+.badge {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.badge svg { width: 100%; height: 100%; display: block; }
+.badge-in { animation: badge-fade-in 0.7s ease both; }
+@keyframes badge-fade-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.achv-total {
+  font-family: Consolas, "Cascadia Mono", monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+  opacity: 0.92;
+  white-space: nowrap;
+}
+
+/* ---- 带下方演示状态行 ---- */
+.demo-stats {
+  max-width: 1240px;
+  margin: 14px auto 0;
+  padding: 0 20px;
+  font-size: 12px;
+  color: #71809a;
+  font-family: Consolas, monospace;
+}
+
+/* ============================================================
+   彭罗斯三角（完整复刻几何岛屿 style.css:1509+）
+   注意两个坑（§6.3④）：关键帧里写死 hex；臂朝向已按顶点法标定
+   ============================================================ */
+.penrose-spin {
+  transform-origin: 50% 50%;
+  animation: penrose-spin 22s linear infinite;
+}
+@keyframes penrose-spin { to { transform: rotate(360deg); } }
+
+.band .hl { display: none; }
+.band .pf1 { animation: lit1-summer 22s linear infinite; }
+.band .pf2 { animation: lit2-summer 22s linear infinite; }
+.band .pf3 { animation: lit3-summer 22s linear infinite; }
+body.season-spring .band .pf1 { animation-name: lit1-spring; }
+body.season-spring .band .pf2 { animation-name: lit2-spring; }
+body.season-spring .band .pf3 { animation-name: lit3-spring; }
+body.season-autumn .band .pf1 { animation-name: lit1-autumn; }
+body.season-autumn .band .pf2 { animation-name: lit2-autumn; }
+body.season-autumn .band .pf3 { animation-name: lit3-autumn; }
+body.season-winter .band .pf1 { animation-name: lit1-winter; }
+body.season-winter .band .pf2 { animation-name: lit2-winter; }
+body.season-winter .band .pf3 { animation-name: lit3-winter; }
+body.night .band .pf1 { animation-name: lit1-night; }
+body.night .band .pf2 { animation-name: lit2-night; }
+body.night .band .pf3 { animation-name: lit3-night; }
+
+@keyframes lit1-summer {
+  0% { fill: #ffffff; } 50.14% { fill: #16324f; } 66.89% { fill: #7fb2e0; } 100% { fill: #ffffff; }
+}
+@keyframes lit2-summer {
+  0% { fill: #7fb2e0; } 33.11% { fill: #ffffff; } 83.25% { fill: #16324f; } 100% { fill: #7fb2e0; }
+}
+@keyframes lit3-summer {
+  0% { fill: #16324f; } 16.75% { fill: #7fb2e0; } 49.86% { fill: #ffffff; } 100% { fill: #16324f; }
+}
+@keyframes lit1-spring {
+  0% { fill: #ffffff; } 50.14% { fill: #1a3d1a; } 66.89% { fill: #8bc88b; } 100% { fill: #ffffff; }
+}
+@keyframes lit2-spring {
+  0% { fill: #8bc88b; } 33.11% { fill: #ffffff; } 83.25% { fill: #1a3d1a; } 100% { fill: #8bc88b; }
+}
+@keyframes lit3-spring {
+  0% { fill: #1a3d1a; } 16.75% { fill: #8bc88b; } 49.86% { fill: #ffffff; } 100% { fill: #1a3d1a; }
+}
+@keyframes lit1-autumn {
+  0% { fill: #ffffff; } 50.14% { fill: #5c3310; } 66.89% { fill: #e8b87a; } 100% { fill: #ffffff; }
+}
+@keyframes lit2-autumn {
+  0% { fill: #e8b87a; } 33.11% { fill: #ffffff; } 83.25% { fill: #5c3310; } 100% { fill: #e8b87a; }
+}
+@keyframes lit3-autumn {
+  0% { fill: #5c3310; } 16.75% { fill: #e8b87a; } 49.86% { fill: #ffffff; } 100% { fill: #5c3310; }
+}
+@keyframes lit1-winter {
+  0% { fill: #ffffff; } 50.14% { fill: #3a2560; } 66.89% { fill: #b8a0d8; } 100% { fill: #ffffff; }
+}
+@keyframes lit2-winter {
+  0% { fill: #b8a0d8; } 33.11% { fill: #ffffff; } 83.25% { fill: #3a2560; } 100% { fill: #b8a0d8; }
+}
+@keyframes lit3-winter {
+  0% { fill: #3a2560; } 16.75% { fill: #b8a0d8; } 49.86% { fill: #ffffff; } 100% { fill: #3a2560; }
+}
+@keyframes lit1-night {
+  0% { fill: #ffffff; } 50.14% { fill: #3a5a82; } 66.89% { fill: #6b95c8; } 100% { fill: #ffffff; }
+}
+@keyframes lit2-night {
+  0% { fill: #6b95c8; } 33.11% { fill: #ffffff; } 83.25% { fill: #3a5a82; } 100% { fill: #6b95c8; }
+}
+@keyframes lit3-night {
+  0% { fill: #3a5a82; } 16.75% { fill: #6b95c8; } 49.86% { fill: #ffffff; } 100% { fill: #3a5a82; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .penrose-spin, .band .pf { animation: none; }
+  .badge-in { animation: none; }
+}

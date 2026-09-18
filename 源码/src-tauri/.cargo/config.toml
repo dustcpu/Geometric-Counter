@@ -1,0 +1,16 @@
+# 编译参数（仅本工程）
+#
+# --remap-path-prefix：把编译期嵌入二进制的绝对路径重写掉。
+# 不加这段，release 二进制里会嵌 300+ 处「本机用户目录下的 cargo 缓存路径」
+# （依赖库的 panic 位置信息），分发给别人等于把用户名和目录结构一起送出去。
+#
+# 这里把【用户目录】与【工程目录】都映射为 `~`，二进制里从此只有 `~\...`。
+# 换到别人的机器上编译时，把下面两行替换成你自己的路径即可。
+#
+# 改了这个文件会触发依赖全量重编（release 约 5 分钟），是正常的。
+
+[build]
+rustflags = [
+  '--remap-path-prefix=C:\Users\YourName=~',
+  '--remap-path-prefix=C:\path\to\geometric-ocean=~',
+]

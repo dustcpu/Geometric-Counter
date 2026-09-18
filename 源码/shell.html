@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>几何任务栏小插件</title>
+<link rel="stylesheet" href="style.css?v=20260918-7">
+<script>
+// 页面 JS 崩溃哨兵：把错误写进窗口标题，供外部探针读取（桌面壳无控制台）
+window.onerror = function (msg, src, line) {
+  try { document.title = 'JSERR L' + line + ': ' + msg; } catch (e) { }
+};
+</script>
+<style>
+  /* ============ 桌面壳专用样式（仅覆盖必要项）============
+     窗口覆盖 78–1290（逻辑 1212×48），中间 546–1043 由 Rust 侧的窗口区域挖空。
+     视觉走 Win11 卡片风：两块圆角小板 + 1px 微光描边，击键时描边短暂高亮。
+     画布沿用全带坐标系，canvas 用 ctx.translate(-78, 0) 平移对齐。 */
+  html, body { margin: 0; padding: 0; background: #1e2129; overflow: hidden; }
+  .band-outer { position: absolute; top: 0; left: 0; }
+  .band {
+    width: 1212px;                   /* = 窗口宽（78→1290） */
+    height: 48px;
+    border-radius: 0;
+    border: none;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  /* ---- Win11 卡片：只有左侧海面卡（描边+悬停高亮）----
+     右侧粒子区：无描边、无高亮，只有深色底 + 粒子（底色即 body 色） */
+  .plate {
+    position: absolute;
+    top: 3px;
+    height: calc(100% - 5px);        /* 与 region 内缩一致：顶 3 / 底 2 */
+    background: #1e2129;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    box-sizing: border-box;
+    pointer-events: none;
+    z-index: 0;
+  }
+  #plateLeft  { left: 2px;   width: 464px; }   /* region 左板 2..466 */
+  .band canvas { z-index: 1; }
+  .achv { z-index: 2; }
+  .achv { left: 300px; }             /* 378(带坐标) − 78(窗口偏移) = 300 */
+</style>
+</head>
+<body>
+  <div class="band-outer" id="bandOuter">
+    <div class="band" id="band">
+      <div class="plate" id="plateLeft"></div>
+      <canvas id="bandCanvas"></canvas>
+
+      <!-- 成就区：徽章（单枚陈列）+ 今日/累计 -->
+      <div class="achv">
+        <div class="achv-badges" id="achvBadges"></div>
+        <div class="achv-total" id="achvTotal">今日 0 ｜ 累计 0</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模块（顺序依赖：config → theme/shapes/ocean/badges/keyboard → fountain/achievements） -->
+  <script src="src/config.js?v=20260918-7"></script>
+  <script src="src/theme.js?v=20260918-7"></script>
+  <script src="src/shapes.js?v=20260918-7"></script>
+  <script src="src/ocean.js?v=20260918-7"></script>
+  <script src="src/badges.js?v=20260918-7"></script>
+  <script src="src/keyboard-source.js?v=20260918-7"></script>
+  <script src="src/fountain.js?v=20260918-7"></script>
+  <script src="src/trail.js?v=20260918-7"></script>
+  <script src="src/achievements.js?v=20260918-7"></script>
+  <script>
+  (function () {
+    var cfg = GOW.config;
+    var WINX = cfg.zone.x;      // 窗口左缘（逻辑）——Rust 侧按任务栏实测布局动态决定
+    var WINW = 1212;            // 窗口宽（逻辑）——同上
+
+    var canvas = document.getElementById('bandCanvas');
+    var ctx = canvas.getContext('2d');
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var outer = document.getElementById('bandOuter');
+    var band = document.getElementById('band');
+    var plateLeft = document.getElementById('plateLeft');
+    var achvEl = document.querySelector('.achv');
+
+    // ---- 画布几何：随布局重设（改 width 会重置变换，所以每次重设 setTransform）----
+    function setCanvasGeometry() {
+      canvas.width = WINW * dpr;
+      canvas.height = cfg.H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, -WINX * dpr, 0);   // 平移对齐全带坐标系
+    }
+
+    // ---- 尺寸自适应（正常 s=1；防御性保留）----
+    function fit() {
+      var s = Math.min(1, window.innerWidth / WINW, window.innerHeight / cfg.H);
+      outer.style.width = (WINW * s) + 'px';
+      outer.style.height = (cfg.H * s) + 'px';
+      band.style.transform = 'scale(' + s + ')';
+    }
+
+    // ---- 自适应布局：Rust 实测任务栏（开始按钮 / 托盘 位置）后推过来 ----
+    //     解决「换台电脑分辨率不同 → 卡片压住图标」的问题；同时兼作分辨率变化重定位。
+    var lastLayoutRev = -1;
+    function applyLayout(L) {
+      WINX = L.winX;
+      WINW = L.winW;
+      cfg.zone.x = L.zoneX;
+      cfg.zone.width = L.zoneW;
+      cfg.fountain.x = cfg.zone.x;
+      cfg.achievements.x = cfg.zone.x + cfg.fountain.width;
+      cfg.rightZone.x = L.rightX;
+      cfg.rightZone.width = L.rightW;
+      setCanvasGeometry();
+      fit();
+      plateLeft.style.left = (L.zoneX - L.winX) + 'px';
+      plateLeft.style.width = L.zoneW + 'px';
+      achvEl.style.left = (cfg.achievements.x - L.winX) + 'px';
+      GOW.fountain.init();     // 区域变了 → 槽位重建（旧几何体绝对坐标已失效）
+    }
+
+    setCanvasGeometry();
+    window.addEventListener('resize', fit);
+    fit();
+
+    // Rust 只在布局变化时改动 rev；这里 300ms 轮询，晚加载也能拿到
+    setInterval(function () {
+      var L = window.__LAYOUT;
+      if (L && L.rev !== lastLayoutRev) {
+        lastLayoutRev = L.rev;
+        try { applyLayout(L); } catch (e) { }
+      }
+    }, 300);
+
+    // ---- 成就区 DOM 渲染（单枚陈列）----
+    var badgesEl = document.getElementById('achvBadges');
+    var totalEl = document.getElementById('achvTotal');
+    function renderBadges(unlockedCount, animateFrom) {
+      badgesEl.innerHTML = '';
+      if (unlockedCount > 0) {
+        var i = unlockedCount - 1;
+        var div = document.createElement('div');
+        div.className = 'badge' + (unlockedCount > animateFrom ? ' badge-in' : '');
+        div.title = GOW.BADGES[i].name + '（' + cfg.thresholds[i] + ' 次解锁）';
+        div.innerHTML = GOW.BADGES[i].svg;
+        badgesEl.appendChild(div);
+      }
+    }
+
+    // ---- 存档：桌面版双写（localStorage + JSON 文件）----
+    //     文件由 Rust 写：%LOCALAPPDATA%\GeometricCounter\stats.json
+    //     连接时 Rust 会把文件内容以 { init: {...} } 推回来 → 单调合并，不会倒扣进度
+    var wsHandle = null;
+    function desktopStorage() {
+      return {
+        load: function () {
+          try { return JSON.parse(localStorage.getItem(cfg.storageKey) || 'null'); }
+          catch (e) { return null; }
+        },
+        save: function (s) {
+          try { localStorage.setItem(cfg.storageKey, JSON.stringify(s)); } catch (e) { }
+          if (wsHandle && wsHandle.send) wsHandle.send(JSON.stringify(s));
+        }
+      };
+    }
+
+    GOW.achievements.init({
+      renderBadges: renderBadges,
+      setTotal: function () { },
+      storage: (typeof window.__TAURI_INTERNALS__ !== 'undefined') ? desktopStorage() : null
+    });
+    var dispTotal = GOW.achievements.stats().total;
+    var dispToday = GOW.achievements.stats().today.count;
+    var lastTotalTxt = '';
+
+    // ---- 键盘数据源（自动选择）----
+    // 2a（默认）：WS 不在线 → 回退页面内键盘（点击窗口获取焦点后敲键有效）
+    // 2b（--global，WS 服务在线）：全局钩子事件接管（无需焦点）
+    GOW.fountain.init();
+    (function attachSource(onKey) {
+      var inTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
+      if (!inTauri) {
+        GOW.keyboard.createWebSource(onKey);
+        return;
+      }
+      var wsOnline = false;
+      wsHandle = GOW.keyboard.createWebSocketSource(
+        'ws://127.0.0.1:27183',
+        onKey,
+        function () { wsOnline = true; },              // 连接建立即视为在线（2b）
+        function (msg) {                               // 非按键消息：JSON 存档
+          if (msg && msg.init) GOW.achievements.merge(msg.init);
+        }
+      );
+      setTimeout(function () {
+        if (!wsOnline) GOW.keyboard.createWebSource(onKey);   // 2a / 无服务
+      }, 1200);
+    })(function (ev) {
+      GOW.achievements.recordKey(ev.zone);
+      GOW.fountain.trySpawn(ev.zone);
+      GOW.trail.onKey();
+      bumpGlow();
+    });
+
+    // ---- 描边高亮：悬停常亮（Rust 推送 __OCEAN_HOVER）+ 击键脉冲，取较强者 ----
+    var plates = [
+      document.getElementById('plateLeft')   // 右板已去卡化——只有左卡参与高亮
+    ];
+    var hoverOn = false, keyT = 0, glowReset = true;
+    function bumpGlow() { keyT = 1; glowReset = false; }
+    setInterval(function () {
+      var v = window.__OCEAN_HOVER === true;
+      if (v !== hoverOn) { hoverOn = v; glowReset = false; }
+    }, 100);
+    function tickGlow(rawDt) {
+      if (keyT > 0) keyT = Math.max(0, keyT - rawDt / 0.35);
+      var g = hoverOn ? 1 : keyT;            // 悬停常亮 ≥ 击键脉冲
+      if (g <= 0) {
+        if (!glowReset) {                    // 归位一次即可，避免每帧写样式
+          for (var i = 0; i < plates.length; i++) {
+            plates[i].style.borderColor = 'rgba(255,255,255,0.14)';
+            plates[i].style.boxShadow = 'none';
+          }
+          glowReset = true;
+        }
+        return;
+      }
+      var b = 'rgba(255,255,255,' + (0.14 + 0.28 * g).toFixed(3) + ')';
+      // 内发光（inset）：外发光会被不透明窗口的 region 裁掉，只有画在卡内才可见
+      var sh = 'inset 0 0 9px rgba(115,170,225,' + (0.45 * g).toFixed(3) + ')';
+      for (var j = 0; j < plates.length; j++) {
+        plates[j].style.borderColor = b;
+        plates[j].style.boxShadow = sh;
+      }
+      glowReset = false;
+    }
+
+    // ---- 主循环 ----
+    var reduced = false;
+    try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { }
+
+    GOW.theme.setAuto();
+
+    var last = performance.now();
+    var dispTotal2 = dispTotal, dispToday2 = dispToday;
+    function frame(now) {
+      requestAnimationFrame(frame);   // ★ 先排下一帧：单帧异常不再杀死整片海
+      try {
+        var rawDt = Math.min((now - last) / 1000, 0.05);
+        last = now;
+        var t = now / 1000;
+        var dt = reduced ? 0 : rawDt;
+
+        GOW.theme.update(rawDt, reduced);
+        GOW.achievements.tick(rawDt);
+        GOW.fountain.update(dt);
+        GOW.trail.update(dt);
+        tickGlow(rawDt);
+
+        // 清屏：覆盖整个窗口宽（左右两块区域）
+        ctx.clearRect(WINX, 0, WINW, cfg.H);
+        GOW.ocean.drawWaves(ctx, t);
+        GOW.fountain.draw(ctx, t);
+        GOW.ocean.drawWaterline(ctx, t);
+        GOW.trail.draw(ctx);
+
+        // 今日/累计数字缓动追值
+        var st = GOW.achievements.stats();
+        var fNum = 1 - Math.pow(0.0005, rawDt);
+        dispTotal2 += (st.total - dispTotal2) * fNum;
+        dispToday2 += (st.today.count - dispToday2) * fNum;
+        var txt = '今日 ' + Math.round(dispToday2).toLocaleString('zh-CN') +
+          ' ｜ 累计 ' + Math.round(dispTotal2).toLocaleString('zh-CN');
+        if (txt !== lastTotalTxt) {
+          lastTotalTxt = txt;
+          totalEl.textContent = txt;
+        }
+
+        badgesEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.95);
+        totalEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.9);
+      } catch (e) {
+        // 崩溃哨兵：首个异常写进窗口标题供探针远程读取，后续静默丢帧
+        try {
+          if (!window.__frameErrLogged) {
+            window.__frameErrLogged = 1;
+            document.title = 'JSERR frame: ' + (e && e.message ? e.message : e);
+          }
+        } catch (e2) { }
+      }
+    }
+    requestAnimationFrame(frame);
+  })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>几何任务栏小插件 · 阶段一 Demo</title>
+<link rel="stylesheet" href="style.css?v=20260918-7">
+</head>
+<body class="season-summer">
+
+  <header class="demo-head">
+    <h1>几何任务栏小插件 · 阶段一 Demo</h1>
+    <p>
+      <b>点击页面任意处获取焦点，然后敲键盘</b> —— 左侧小海会随机浮出六种几何体之一（立方体/三棱锥/圆柱/圆锥/正八面体/六棱柱），浮出与沉没时破起水花，水面下有倒影。
+      累计达到 <b>100 / 200 / 400 … 7700</b> 时，右侧成就区依次解锁几何体徽章（最终是会自转的彭罗斯三角）。
+      下方彩色按钮仅用于预览五套主题。数据存于浏览器 localStorage，不上传。
+    </p>
+    <div class="controls" id="controls">
+      <button data-season="spring">春</button>
+      <button data-season="summer">夏</button>
+      <button data-season="autumn">秋</button>
+      <button data-season="winter">冬</button>
+      <button data-mode="night">夜</button>
+      <button data-mode="auto">自动</button>
+    </div>
+  </header>
+
+  <div class="stage">
+    <div class="band-outer" id="bandOuter">
+      <div class="band" id="band">
+        <canvas id="bandCanvas"></canvas>
+
+        <!-- 模拟任务栏中间内容（仅演示遮挡参考） -->
+        <div class="fake-center">
+          <div class="fake-search">🔍 搜索</div>
+          <div class="fake-icons">
+            <div class="fake-icon underline"></div>
+            <div class="fake-icon underline"></div>
+            <div class="fake-icon"></div>
+            <div class="fake-icon"></div>
+          </div>
+        </div>
+        <div class="fake-clock" id="fakeClock">--:--<br><span style="font-size:10px;opacity:.75">演示任务栏</span></div>
+
+        <!-- 成就区：徽章 + 累计总数 -->
+        <div class="achv">
+          <div class="achv-badges" id="achvBadges"></div>
+          <div class="achv-total" id="achvTotal">累计 0</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="demo-stats" id="demoStats">
+    已计数 0 ｜ 动画丢弃 0 ｜ 当前悬浮 0/6
+  </div>
+
+  <!-- 模块（顺序依赖：config → theme/shapes/ocean/badges/keyboard → fountain/achievements） -->
+  <script src="src/config.js?v=20260918-7"></script>
+  <script src="src/theme.js?v=20260918-7"></script>
+  <script src="src/shapes.js?v=20260918-7"></script>
+  <script src="src/ocean.js?v=20260918-7"></script>
+  <script src="src/badges.js?v=20260918-7"></script>
+  <script src="src/keyboard-source.js?v=20260918-7"></script>
+  <script src="src/fountain.js?v=20260918-7"></script>
+  <script src="src/trail.js?v=20260918-7"></script>
+  <script src="src/achievements.js?v=20260918-7"></script>
+  <script>
+  (function () {
+    var cfg = GOW.config;
+
+    // ---- 画布（dpr 高清）----
+    var canvas = document.getElementById('bandCanvas');
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = cfg.W * dpr;
+    canvas.height = cfg.H * dpr;
+    var ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+
+    // ---- 自适应缩放（窗口 < 1600 时等比缩小整条带）----
+    var outer = document.getElementById('bandOuter');
+    var band = document.getElementById('band');
+    function fit() {
+      var s = Math.min(1, (window.innerWidth - 28) / cfg.W);
+      outer.style.width = (cfg.W * s) + 'px';
+      outer.style.height = (cfg.H * s) + 'px';
+      band.style.transform = 'scale(' + s + ')';
+    }
+    window.addEventListener('resize', fit);
+    fit();
+
+    // ---- 成就区 DOM 渲染 ----
+    var badgesEl = document.getElementById('achvBadges');
+    var totalEl = document.getElementById('achvTotal');
+    // 单枚陈列：新的成就顶替原来的，只显示最新解锁的徽章（Dust 2026-09-16）
+    function renderBadges(unlockedCount, animateFrom) {
+      badgesEl.innerHTML = '';
+      if (unlockedCount > 0) {
+        var i = unlockedCount - 1;
+        var div = document.createElement('div');
+        div.className = 'badge' + (unlockedCount > animateFrom ? ' badge-in' : '');
+        div.title = GOW.BADGES[i].name + '（' + cfg.thresholds[i] + ' 次解锁）';
+        div.innerHTML = GOW.BADGES[i].svg;
+        badgesEl.appendChild(div);
+      }
+    }
+
+    GOW.achievements.init({
+      renderBadges: renderBadges,
+      setTotal: function () { }   // 滚动动画是数字的唯一写入方（避免两次写入打架）
+    });
+    // 数字缓动从已存值起步（加载时不从 0 滚，只有增量滚动）
+    dispTotal = GOW.achievements.stats().total;
+    dispToday = GOW.achievements.stats().today.count;
+
+    // ---- 键盘数据源（自动选择）----
+    // 浏览器 / 阶段 2a：页面内键盘（createWebSource）
+    // 阶段 2b（exe --global，WS 服务在线）：全局钩子事件（createWebSocketSource）
+    // 判定：Tauri 内先尝试 WS；1.2s 内没收到任何 WS 事件 → 回退页面内键盘
+    var statsEl = document.getElementById('demoStats');
+    GOW.fountain.init();   // ★ 初始化 6 个喷泉槽位（漏掉会导致全部按键被丢弃）
+    (function attachSource(onKey) {
+      var inTauri = typeof window.__TAURI_INTERNALS__ !== 'undefined';
+      if (!inTauri) {
+        GOW.keyboard.createWebSource(onKey);
+        return;
+      }
+      var wsOnline = false;
+      GOW.keyboard.createWebSocketSource(
+        'ws://127.0.0.1:27183',
+        onKey,
+        function () { wsOnline = true; }        // 连接建立即视为在线（2b）
+      );
+      setTimeout(function () {
+        if (!wsOnline) GOW.keyboard.createWebSource(onKey);   // 2a / 无服务
+      }, 1200);
+    })(function (ev) {
+      GOW.achievements.recordKey(ev.zone);   // 计数先行（与动画解耦）
+      GOW.fountain.trySpawn(ev.zone);        // 槽满则注入，不影响计数
+      GOW.trail.onKey();                     // 右侧季节粒子：随打字生成，快打多撒
+    });
+
+    // ---- 主题演示控制 ----
+    var controls = document.getElementById('controls');
+    function syncControls() {
+      var btns = controls.querySelectorAll('button');
+      for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        var active = b.dataset.mode
+          ? (b.dataset.mode === 'auto' ? GOW.theme.isAuto() : (!GOW.theme.isAuto() && GOW.theme.mode() === b.dataset.mode))
+          : (!GOW.theme.isAuto() && GOW.theme.mode() === 'day' && GOW.theme.season() === b.dataset.season);
+        b.classList.toggle('active', !!active);
+      }
+    }
+    controls.addEventListener('click', function (e) {
+      var b = e.target.closest('button');
+      if (!b) return;
+      if (b.dataset.mode === 'auto') GOW.theme.setAuto();
+      else if (b.dataset.mode) GOW.theme.setMode(b.dataset.mode);
+      else GOW.theme.setSeason(b.dataset.season);
+      syncControls();
+    });
+
+    // ---- 模拟时钟 ----
+    var clockEl = document.getElementById('fakeClock');
+    var lastClock = '';
+    function tickClock() {
+      var d = new Date();
+      var s = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      if (s !== lastClock) {
+        lastClock = s;
+        clockEl.innerHTML = s + '<br><span style="font-size:10px;opacity:.75">演示任务栏</span>';
+      }
+    }
+
+    // ---- 主循环 ----
+    var reduced = false;
+    try { reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (e) { }
+
+    GOW.theme.setAuto();
+    syncControls();
+
+    var last = performance.now();
+    var statAcc = 0;
+    var dispTotal = 0, dispToday = 0, lastTotalTxt = '';   // 数字滚动缓动状态（init 后赋初值）
+    function frame(now) {
+      requestAnimationFrame(frame);   // ★ 先排下一帧：单帧异常不再杀死整片海
+      try {
+        var rawDt = Math.min((now - last) / 1000, 0.05);
+        last = now;
+        var t = now / 1000;
+        var dt = reduced ? 0 : rawDt;   // reduced-motion：动画冻结，计数照常
+
+        GOW.theme.update(rawDt, reduced);
+        GOW.achievements.tick(rawDt);
+        GOW.fountain.update(dt);
+        GOW.trail.update(dt);
+
+        ctx.clearRect(0, 0, cfg.W, cfg.H);
+        GOW.ocean.drawWaves(ctx, t);      // 背景：随机起伏的波浪线
+        GOW.fountain.draw(ctx, t);        // 几何体 + 涟漪 + 水花 + 倒影
+        GOW.ocean.drawWaterline(ctx, t);  // 前景：水面线横穿几何体（浸在水里）
+        GOW.trail.draw(ctx);
+
+        // ---- 累计/今日数字缓动追值（odometer 式，0.3s 滚到位）----
+        var st = GOW.achievements.stats();
+        var fNum = 1 - Math.pow(0.0005, rawDt);
+        dispTotal += (st.total - dispTotal) * fNum;
+        dispToday += (st.today.count - dispToday) * fNum;
+        var txt = '今日 ' + Math.round(dispToday).toLocaleString('zh-CN') +
+          ' ｜ 累计 ' + Math.round(dispTotal).toLocaleString('zh-CN');
+        if (txt !== lastTotalTxt) {
+          lastTotalTxt = txt;
+          totalEl.textContent = txt;
+        }
+
+        // 成就区颜色跟随主题 solid
+        badgesEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.95);
+        totalEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.9);
+
+        tickClock();
+
+        // 状态行（0.25s 刷一次足够）
+        statAcc += rawDt;
+        if (statAcc > 0.25) {
+          statAcc = 0;
+          statsEl.textContent = '已计数 ' + GOW.achievements.stats().total +
+            ' ｜ 注入 ' + GOW.fountain.injected() +
+            ' ｜ 当前悬浮 ' + GOW.fountain.activeCount() + '/' + cfg.fountain.slots;
+        }
+      } catch (e) { /* 单帧异常静默丢弃，主循环保活（与 shell.html 同策略） */ }
+    }
+    requestAnimationFrame(frame);
+
+    // ---- 退出前落盘 ----
+    window.addEventListener('pagehide', function () { GOW.achievements.flush(); });
+    document.addEventListener('visibilitychange', function () {
+      if (document.hidden) GOW.achievements.flush();
+    });
+  })();
+  </script>
+</body>
+</html>

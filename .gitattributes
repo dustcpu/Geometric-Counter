@@ -1,0 +1,6 @@
+# 批处理文件始终以 CRLF 检出（Windows cmd 友好）
+*.bat text eol=crlf
+
+# 二进制不做换行转换、不做行级 diff（避免仓库无谓膨胀）
+*.exe binary
+*.ico binary

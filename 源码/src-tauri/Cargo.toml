@@ -1,0 +1,24 @@
+[package]
+name = "geometric-ocean"
+version = "0.1.0"
+edition = "2021"
+description = "几何任务栏小插件 —— Win11 任务栏上的呼吸小海"
+
+# 见 src/main.rs：默认 2a 模式（零系统钩子），--global 进入 2b（全局键盘）
+[[bin]]
+name = "geometric-ocean"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-global-shortcut = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 同步 WS（不引 tokio，保持依赖轻）
+tungstenite = "0.24"
+# 全局键盘钩子（2b 用；设计文档推荐的 tauri-plugin-user-input 会把原始键码
+# 发往 webview，违反「keycode 不出 Rust 侧」的隐私红线，故用 rdev 本地映射）
+rdev = "0.5"
