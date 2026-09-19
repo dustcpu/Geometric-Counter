@@ -12,7 +12,7 @@ fn main() {
     }
     std::fs::create_dir_all(&dist).expect("创建 dist 失败");
 
-    for item in ["index.html", "shell.html", "style.css", "src"] {
+    for item in ["index.html", "shell.html", "settings.html", "style.css", "src"] {
         let from = root.join(item);
         let to = dist.join(item);
         if from.is_dir() {

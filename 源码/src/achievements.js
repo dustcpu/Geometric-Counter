@@ -143,12 +143,22 @@ GOW.achievements = (function () {
     dirty = true;    // 下一轮 tick 落盘
   }
 
+  // 重置统计（设置面板触发）：清空计数与徽章进度，立即落盘覆盖旧存档
+  function reset() {
+    stats = { total: 0, zones: {}, unlockedLevel: 0, today: { date: todayStr(), count: 0 } };
+    dirty = false;
+    save();                       // 立即写盘（桌面版同时把空存档发给 Rust）
+    renderBadges(0, 0);
+    setTotal(formatTotal(0));
+  }
+
   return {
     init: init,
     merge: merge,
     recordKey: recordKey,
     tick: tick,
     flush: flush,
+    reset: reset,
     levelFor: levelFor,
     stats: function () { return stats; }
   };

@@ -49,6 +49,7 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 源码/
 ├── index.html            浏览器演示版（阶段一的 1600×48 模拟带，可直接用浏览器打开）
 ├── shell.html            桌面壳页面（Tauri 窗口加载这个，只有海面卡 + 粒子卡）
+├── settings.html         设置面板（双击海面打开的独立窗口，经 Tauri IPC 读写设置）
 ├── style.css             两个页面共用的样式
 ├── src/                  前端九个模块（原生 JS，无框架、无构建步骤）
 │   ├── config.js         所有可调参数集中在此（尺寸/槽位/阶梯/运动参数）
@@ -92,6 +93,11 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
    每 2 秒复测 → 换分辨率/DPI/图标数量都能自愈。
 8. **存档双写**：页面写 localStorage，同时经本地 WebSocket 交给 Rust 写
    `%LOCALAPPDATA%\GeometricCounter\stats.json`；启动时读回并**单调合并**（只增不减）。
+9. **设置走 IPC**：设置面板 → `save_settings` 命令 → Rust 落盘 `settings.json` →
+   `eval` 广播给主窗口即时生效。**设置窗口打开期间暂停主窗口抢层**，否则它会把设置窗口压住。
+   （注意：本地 WebSocket 是**单客户端**通道，设置面板不能复用它——会把主窗口挤掉。）
+10. **避让规则集中在 Rust**：任务栏图标遮挡（`measure_layout` 算图标组右缘）、
+   全屏应用 / 自动隐藏 / shell 浮出层（`spawn_visibility_guard` 统一掩码）都在 `main.rs` 里。
 
 ---
 

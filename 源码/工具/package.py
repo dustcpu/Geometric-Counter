@@ -27,7 +27,7 @@ README_SRC_BASE = os.path.join(PKG, "README-源码-基础版.md")
 
 # ---- 源码包（随分享包分发，已去隐私）----
 SRC_FILES = [
-    "index.html", "shell.html", "style.css",
+    "index.html", "shell.html", "settings.html", "style.css",
     "src/config.js", "src/theme.js", "src/shapes.js", "src/ocean.js",
     "src/fountain.js", "src/trail.js", "src/badges.js",
     "src/achievements.js", "src/keyboard-source.js",

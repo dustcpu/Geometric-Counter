@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <title>几何任务栏小插件</title>
-<link rel="stylesheet" href="style.css?v=20260918-7">
+<link rel="stylesheet" href="style.css?v=20260919-1">
 <script>
 // 页面 JS 崩溃哨兵：把错误写进窗口标题，供外部探针读取（桌面壳无控制台）
 window.onerror = function (msg, src, line) {
@@ -60,15 +60,15 @@ window.onerror = function (msg, src, line) {
   </div>
 
   <!-- 模块（顺序依赖：config → theme/shapes/ocean/badges/keyboard → fountain/achievements） -->
-  <script src="src/config.js?v=20260918-7"></script>
-  <script src="src/theme.js?v=20260918-7"></script>
-  <script src="src/shapes.js?v=20260918-7"></script>
-  <script src="src/ocean.js?v=20260918-7"></script>
-  <script src="src/badges.js?v=20260918-7"></script>
-  <script src="src/keyboard-source.js?v=20260918-7"></script>
-  <script src="src/fountain.js?v=20260918-7"></script>
-  <script src="src/trail.js?v=20260918-7"></script>
-  <script src="src/achievements.js?v=20260918-7"></script>
+  <script src="src/config.js?v=20260919-1"></script>
+  <script src="src/theme.js?v=20260919-1"></script>
+  <script src="src/shapes.js?v=20260919-1"></script>
+  <script src="src/ocean.js?v=20260919-1"></script>
+  <script src="src/badges.js?v=20260919-1"></script>
+  <script src="src/keyboard-source.js?v=20260919-1"></script>
+  <script src="src/fountain.js?v=20260919-1"></script>
+  <script src="src/trail.js?v=20260919-1"></script>
+  <script src="src/achievements.js?v=20260919-1"></script>
   <script>
   (function () {
     var cfg = GOW.config;
@@ -197,7 +197,7 @@ window.onerror = function (msg, src, line) {
     })(function (ev) {
       GOW.achievements.recordKey(ev.zone);
       GOW.fountain.trySpawn(ev.zone);
-      GOW.trail.onKey();
+      if (trailOn) GOW.trail.onKey();
       bumpGlow();
     });
 
@@ -240,6 +240,65 @@ window.onerror = function (msg, src, line) {
 
     GOW.theme.setAuto();
 
+    // ---- 设置（双击海面打开的设置面板）：启动时经 IPC 拉取，保存时由 Rust 推过来 ----
+    var trailOn = true, hudMode = 'full', hudApplied = '';
+    function applyHud() {
+      if (hudMode === hudApplied) return;
+      hudApplied = hudMode;
+      badgesEl.style.display = (hudMode === 'full') ? '' : 'none';
+      totalEl.style.display = (hudMode === 'none') ? 'none' : '';
+    }
+    function applySettings(s) {
+      if (!s || typeof s !== 'object') return;
+      // 主题
+      var th = String(s.theme || 'auto');
+      if (th === 'auto') GOW.theme.setAuto();
+      else if (th === 'night') GOW.theme.setMode('night');
+      else if (th === 'spring' || th === 'summer' || th === 'autumn' || th === 'winter') GOW.theme.setSeason(th);
+      // 悬停存活时长（打字注入可续命）
+      var idle = Number(s.idleTime);
+      if (idle >= 0.6 && idle <= 3) cfg.idleTime = idle;
+      // 动画速度：只缩放浮出与落下，停留时长不受影响
+      var sp = Number(s.speed);
+      if (sp >= 0.5 && sp <= 2) { cfg.riseDur = 0.4 * sp; cfg.fallDur = 0.4 * sp; }
+      // 几何体大小（对之后浮出的生效）
+      var sc = Number(s.scale);
+      if (sc >= 0.2 && sc <= 0.45) cfg.scale = sc;
+      // 季节粒子开关
+      trailOn = !(String(s.trail) === '0');
+      // 成就区显示
+      hudMode = String(s.hud || 'full');
+      applyHud();
+    }
+    if (typeof window.__TAURI_INTERNALS__ !== 'undefined') {
+      window.__TAURI_INTERNALS__.invoke('get_settings').then(function (txt) {
+        try { applySettings(JSON.parse(txt || '{}')); } catch (e) { }
+      }).catch(function () { });
+    }
+    // 设置面板保存后 Rust 会 eval 到本窗口 → 检测变化并应用
+    var lastSettingsJson = '';
+    setInterval(function () {
+      var s = window.__OCEAN_SETTINGS;
+      if (!s) return;
+      var j;
+      try { j = JSON.stringify(s); } catch (e) { return; }
+      if (j === lastSettingsJson) return;
+      lastSettingsJson = j;
+      applySettings(s);
+    }, 300);
+    // 设置面板点了「重置统计」
+    setInterval(function () {
+      if (window.__OCEAN_RESET) {
+        window.__OCEAN_RESET = 0;
+        try {
+          GOW.achievements.reset();
+          dispTotal2 = 0;
+          dispToday2 = 0;
+          lastTotalTxt = '';
+        } catch (e) { }
+      }
+    }, 300);
+
     var last = performance.now();
     var dispTotal2 = dispTotal, dispToday2 = dispToday;
     function frame(now) {
@@ -253,7 +312,7 @@ window.onerror = function (msg, src, line) {
         GOW.theme.update(rawDt, reduced);
         GOW.achievements.tick(rawDt);
         GOW.fountain.update(dt);
-        GOW.trail.update(dt);
+        if (trailOn) GOW.trail.update(dt);
         tickGlow(rawDt);
 
         // 清屏：覆盖整个窗口宽（左右两块区域）
@@ -261,7 +320,8 @@ window.onerror = function (msg, src, line) {
         GOW.ocean.drawWaves(ctx, t);
         GOW.fountain.draw(ctx, t);
         GOW.ocean.drawWaterline(ctx, t);
-        GOW.trail.draw(ctx);
+        if (trailOn) GOW.trail.draw(ctx);
+        else GOW.trail.clear();   // 关掉粒子：清空池（幂等，无副作用）
 
         // 今日/累计数字缓动追值
         var st = GOW.achievements.stats();

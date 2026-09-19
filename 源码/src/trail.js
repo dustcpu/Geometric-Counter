@@ -224,10 +224,14 @@ GOW.trail = (function () {
     ctx.restore();
   }
 
+  // 清空粒子池（设置里关掉粒子时调用；幂等，每帧调也无副作用）
+  function clear() { particles.length = 0; }
+
   return {
     onKey: onKey,
     update: update,
     draw: draw,
+    clear: clear,
     count: function () { return particles.length; },
     type: type
   };

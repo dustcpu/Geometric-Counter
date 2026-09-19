@@ -70,6 +70,24 @@ mod win32 {
         pub fn GetClassNameW(hwnd: isize, buf: *mut u16, max: i32) -> i32;
         pub fn FindWindowW(class: *const u16, title: *const u16) -> isize;
         pub fn FindWindowExW(parent: isize, after: isize, class: *const u16, title: *const u16) -> isize;
+        /// 鼠标左键当前是否按下（用来在穿透模式下判双击）
+        pub fn GetAsyncKeyState(key: i32) -> i16;
+        /// 屏幕尺寸（SM_CYSCREEN = 1）
+        pub fn GetSystemMetrics(index: i32) -> i32;
+    }
+    #[link(name = "shell32")]
+    extern "system" {
+        /// 查询任务栏状态（ABM_GETSTATE → ABS_AUTOHIDE / ABS_ALWAYSONTOP）
+        pub fn SHAppBarMessage(msg: u32, data: *mut APPBARDATA) -> usize;
+    }
+    #[repr(C)]
+    pub struct APPBARDATA {
+        pub cb_size: u32,
+        pub hwnd: isize,
+        pub callback_message: u32,
+        pub edge: u32,
+        pub rc: RECT,
+        pub lparam: isize,
     }
     #[link(name = "kernel32")]
     extern "system" {
@@ -103,6 +121,10 @@ mod win32 {
     pub const GWL_EXSTYLE: i32 = -20;
     pub const WS_EX_TOPMOST: i32 = 0x0008;
     pub const RGN_OR: i32 = 2;
+    pub const VK_LBUTTON: i32 = 0x01;
+    pub const SM_CYSCREEN: i32 = 1;
+    pub const ABM_GETSTATE: u32 = 0x0000_0004;
+    pub const ABS_AUTOHIDE: usize = 0x0000_0001;
 }
 
 // ---- 窗口几何默认值（会被 measure_layout 的实测布局覆盖）----
@@ -112,11 +134,12 @@ mod win32 {
 const LEFT_BAND_W: f64 = 468.0;        // 海面卡默认宽
 const RIGHT_BAND_W: f64 = 247.0;       // 粒子卡默认宽
 
-/// 悬停监视（穿透模式的正确姿势）：网页收不到鼠标事件，
-/// 由 Rust 每 100ms 查一次光标是否在【海面卡】内（区域随自适应布局变），变化时推给页面。
+/// 悬停监视 + 双击检测（穿透模式下网页收不到鼠标事件，只能由 Rust 代看）：
+/// 每 50ms 查一次光标位置（驱动悬停高亮）与左键状态（按下沿 + 450ms 窗口判双击）。
 #[cfg(windows)]
 fn spawn_hover_watch(win: &tauri::WebviewWindow) {
     let w = win.clone();
+    let app = win.app_handle().clone();
     std::thread::spawn(move || {
         let scale = w.scale_factor().unwrap_or(1.0) as f64;
         let mon_h = w
@@ -127,8 +150,11 @@ fn spawn_hover_watch(win: &tauri::WebviewWindow) {
             .unwrap_or(2000.0);
         let (ty0, ty1) = ((mon_h - 48.0 * scale).round() as i32, mon_h.round() as i32);
         let mut last: Option<bool> = None;
+        let mut prev_down = false;
+        let far = std::time::Duration::from_secs(9);
+        let mut last_click = std::time::Instant::now() - far;
         loop {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            std::thread::sleep(std::time::Duration::from_millis(50));
             // 每次读当前布局区域（自适应布局可能已变）
             let (zx, zw) = LAYOUT_ZONE
                 .lock()
@@ -146,9 +172,63 @@ fn spawn_hover_watch(win: &tauri::WebviewWindow) {
                     last = Some(inside);
                     let _ = w.eval(&format!("window.__OCEAN_HOVER = {};", inside));
                 }
+                // ---- 双击（只在海面卡内有效）：打开设置 ----
+                let down = (win32::GetAsyncKeyState(win32::VK_LBUTTON) as u16 & 0x8000) != 0;
+                if down && !prev_down && inside {
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_click) < std::time::Duration::from_millis(450) {
+                        last_click = now - far;      // 重置，避免三连击重复触发
+                        open_settings(&app);
+                    } else {
+                        last_click = now;
+                    }
+                }
+                prev_down = down;
             }
         }
     });
+}
+
+/// 打开（或唤起）设置窗口。首次双击时创建，之后复用。
+/// 打开期间暂停主窗口抢层，否则主窗口会把设置窗口压住。
+fn open_settings(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        SETTINGS_OPEN.store(true, Ordering::Relaxed);
+        w.show().ok();
+        w.set_focus().ok();
+        return;
+    }
+    let built = tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("settings.html".into()),
+    )
+    .title("几何任务栏小插件 · 设置")
+    .inner_size(380.0, 560.0)
+    .resizable(false)
+    .center()
+    .build();
+    match built {
+        Ok(w) => {
+            SETTINGS_OPEN.store(true, Ordering::Relaxed);
+            let _ = w.set_always_on_top(true);
+            let app2 = app.clone();
+            w.on_window_event(move |e| {
+                if let tauri::WindowEvent::Destroyed = e {
+                    SETTINGS_OPEN.store(false, Ordering::Relaxed);
+                    // 主窗口重新拿回置顶
+                    if let Some(main) = app2.get_webview_window("ocean") {
+                        main.set_always_on_top(true).ok();
+                    }
+                }
+            });
+        }
+        Err(e) => {
+            // 设置窗口打不开不该影响主程序
+            SETTINGS_OPEN.store(false, Ordering::Relaxed);
+            eprintln!("[geometric-ocean] 创建设置窗口失败: {}", e);
+        }
+    }
 }
 
 // ---- 前台事件钩子：任务栏抢层时毫秒级抢回（无注入，回调在本进程线程）----
@@ -159,6 +239,9 @@ extern "system" fn on_foreground_event(
     _hook: isize, _event: u32, _hwnd: isize,
     _id_object: i32, _id_child: i32, _id_thread: u32, _time: u32,
 ) {
+    if SETTINGS_OPEN.load(Ordering::Relaxed) {
+        return;   // 设置窗口开着：别抢层，免得把它压住
+    }
     let h = OCEAN_HWND.load(Ordering::Relaxed);
     if h != 0 {
         unsafe {
@@ -261,9 +344,16 @@ fn measure_layout(win: &tauri::WebviewWindow) -> Layout {
         zone_w = 160.0;   // 极端兜底，宁可压一点也不消失
     }
 
-    // ---- 粒子卡：贴托盘左侧放置；空间不足则缩窄，再不足就放弃 ----
+    // ---- 粒子卡：贴托盘左侧；★ 左侧必须避让「任务栏图标组」----
+    // 2026-09-19：Win11 居中布局下任务栏整组关于屏幕中心对称，故
+    //   图标组右缘 = 屏宽 − 开始按钮左缘
+    // （本机实测 601.5 + 998.5 = 1600 = 屏宽，精确成立）。
+    // 不避让的话，图标一多（再多开 2 个应用）卡片就会压住图标 —— Dust 实测反馈。
+    // 效果：图标少 → 保持 247px；图标变多 → 依次缩窄；再挤 → 自动消失，永不压图标。
+    let icon_right = (mon_w - group_left).max(group_left);
     let right_right = (tray_left - 16.0).max(0.0);
-    let mut right_w = RIGHT_BAND_W.min(247.0).min(right_right - (zone_x + zone_w + 24.0));
+    let right_left = (icon_right + 12.0).max(zone_x + zone_w + 24.0);
+    let mut right_w = RIGHT_BAND_W.min(right_right - right_left);
     let mut right_x = right_right - right_w;
     if right_w < 100.0 {
         right_w = 0.0;    // 没空间 → 关闭粒子卡（trail 会自行跳过）
@@ -400,6 +490,58 @@ fn read_stats() -> Option<String> {
     None
 }
 
+/// 设置文件：与 stats.json 同目录（%LOCALAPPDATA%\GeometricCounter\settings.json）。
+/// 设置窗口经 Tauri IPC 写入 → 这里落盘 → 再广播给主窗口，做到即时生效 + 可备份。
+fn settings_file() -> std::path::PathBuf {
+    let base = std::env::var("LOCALAPPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let dir = base.join("GeometricCounter");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join("settings.json")
+}
+
+/// 读设置；没有文件或格式不对就返回空对象（页面自己用默认值补齐）
+fn read_settings() -> String {
+    std::fs::read_to_string(settings_file())
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| s.starts_with('{') && s.len() < 8192)
+        .unwrap_or_else(|| "{}".to_string())
+}
+
+/// 读设置（设置窗口打开时调用）
+#[tauri::command]
+fn get_settings() -> String {
+    read_settings()
+}
+
+/// 保存设置：落盘 + 广播给主窗口（立即生效，不用重启）
+#[tauri::command]
+fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
+    let t = json.trim().to_string();
+    if !t.starts_with('{') || t.len() > 8192 {
+        return Err("设置数据格式不对".into());
+    }
+    std::fs::write(settings_file(), &t).map_err(|e| e.to_string())?;
+    if let Some(main) = app.get_webview_window("ocean") {
+        let _ = main.eval(&format!("window.__OCEAN_SETTINGS = {};", t));
+    }
+    Ok(())
+}
+
+/// 重置打字统计：只负责通知主窗口，具体清空由页面做（它同时管着 localStorage 与 JSON 回写）
+#[tauri::command]
+fn reset_stats(app: tauri::AppHandle) -> Result<(), String> {
+    match app.get_webview_window("ocean") {
+        Some(main) => {
+            main.eval("window.__OCEAN_RESET = 1;").map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        None => Err("主窗口不在".into()),
+    }
+}
+
 /// 诊断日志路径：优先写项目内的 `.workbuddy\downloads\`（本机便于远程读取），
 /// 找不到项目目录（换了机器，比如朋友电脑）就退回系统临时目录。
 /// ★ 刻意不写死任何绝对路径——分享包里不能出现作者本机的路径信息。
@@ -467,27 +609,113 @@ fn is_shell_flyout_foreground() -> bool {
     }
 }
 
-/// 浮出层守卫：150ms 轮询前台窗口类别，进出浮出层时隐藏/恢复海面。
+// ---- 可见性统一控制 ----
+// 三种「该让位」的原因共用一个掩码：任一命中就隐藏，全部解除才显示。
+// （原先浮出层守卫自己 hide/show，新加全屏与自动隐藏后会互相打架，故统一。）
+static HIDE_MASK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+const HIDE_FLYOUT: u32 = 1;        // shell 浮出层（开始菜单 / 缩略图预览 / 任务视图）
+const HIDE_FULLSCREEN: u32 = 2;    // 前台是全屏应用（游戏 / 全屏视频 / 放映）
+const HIDE_AUTOHIDE: u32 = 4;      // 任务栏开了自动隐藏且当前收起
+/// 设置窗口打开时暂停置顶抢层（否则主窗口会把它压住）
+static SETTINGS_OPEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 更新某个让位原因，并在「该不该显示」发生变化时切换窗口
 #[cfg(windows)]
-fn spawn_flyout_guard(win: &tauri::WebviewWindow) {
+fn set_hide(win: &tauri::WebviewWindow, bit: u32, on: bool) {
+    let prev = HIDE_MASK.load(Ordering::Relaxed);
+    let now = if on { prev | bit } else { prev & !bit };
+    if now == prev {
+        return;
+    }
+    HIDE_MASK.store(now, Ordering::Relaxed);
+    if prev == 0 && now != 0 {
+        win.hide().ok();
+    } else if prev != 0 && now == 0 {
+        win.show().ok();
+        win.set_always_on_top(true).ok();   // 区域由布局看门狗维护，无需重贴
+    }
+}
+
+/// 前台窗口是否全屏盖住整个显示器（游戏 / 全屏视频 / PPT 放映）。
+/// 排除桌面与 shell 自身窗口，否则点一下桌面就会被误判成全屏。
+#[cfg(windows)]
+fn is_fullscreen_foreground(mon: &win32::RECT) -> bool {
+    unsafe {
+        let fg = win32::GetForegroundWindow();
+        if fg == 0 {
+            return false;
+        }
+        let mut buf = [0u16; 128];
+        let n = win32::GetClassNameW(fg, buf.as_mut_ptr(), 128);
+        if n > 0 {
+            let cls = String::from_utf16_lossy(&buf[..n as usize]);
+            if cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd"
+                || cls == "SysListView32" || cls == "Windows.UI.Core.CoreWindow" {
+                return false;
+            }
+        }
+        let mut r = win32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if win32::GetWindowRect(fg, &mut r) == 0 {
+            return false;
+        }
+        r.left <= mon.left && r.top <= mon.top && r.right >= mon.right && r.bottom >= mon.bottom
+    }
+}
+
+/// 任务栏自动隐藏状态：返回 (是否开了自动隐藏, 任务栏当前是否在屏幕内 = 已弹出)
+#[cfg(windows)]
+fn taskbar_autohide_state() -> (bool, bool) {
+    unsafe {
+        let mut abd = win32::APPBARDATA {
+            cb_size: std::mem::size_of::<win32::APPBARDATA>() as u32,
+            hwnd: 0,
+            callback_message: 0,
+            edge: 0,
+            rc: win32::RECT { left: 0, top: 0, right: 0, bottom: 0 },
+            lparam: 0,
+        };
+        let state = win32::SHAppBarMessage(win32::ABM_GETSTATE, &mut abd);
+        if state & win32::ABS_AUTOHIDE == 0 {
+            return (false, true);   // 没开自动隐藏 → 任务栏常驻
+        }
+        // 开了：任务栏被移出屏幕 = 已收起。这时底部 48px 是「弹出热区」，
+        // 我们常驻在那里会盖住全屏内容，所以跟着一起消失。
+        let tb = win32::FindWindowW(wide("Shell_TrayWnd").as_ptr(), std::ptr::null());
+        if tb == 0 {
+            return (true, true);
+        }
+        let mut r = win32::RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        if win32::GetWindowRect(tb, &mut r) == 0 {
+            return (true, true);
+        }
+        let screen_h = win32::GetSystemMetrics(win32::SM_CYSCREEN);
+        (true, r.top < screen_h - 4)
+    }
+}
+
+/// 可见性守卫：150ms 轮询三种「该让位」的情形，统一交给掩码处理。
+///  ① shell 浮出层（开始菜单 / 任务栏缩略图预览 / 任务视图）
+///  ② 前台全屏应用（游戏 / 全屏视频 / 放映）
+///  ③ 任务栏自动隐藏且当前收起
+#[cfg(windows)]
+fn spawn_visibility_guard(win: &tauri::WebviewWindow) {
     let w = win.clone();
     std::thread::spawn(move || {
-        let mut hidden = false;
+        let (mon_w, mon_h) = w
+            .primary_monitor()
+            .ok()
+            .flatten()
+            .map(|m| (m.size().width as i32, m.size().height as i32))
+            .unwrap_or((1920, 1080));
         loop {
             std::thread::sleep(std::time::Duration::from_millis(150));
+            let mon = win32::RECT { left: 0, top: 0, right: mon_w, bottom: mon_h };
             let flyout = is_shell_flyout_foreground();
-            if flyout == hidden {
-                continue;   // 状态未变
-            }
-            if flyout {
-                w.hide().ok();
-                hidden = true;
-            } else {
-                // 浮出层关闭 → 回来（重贴区域 + 恢复置顶）
-                w.show().ok();
-                w.set_always_on_top(true).ok();   // 区域由布局看门狗维护，无需重贴
-                hidden = false;
-            }
+            let full = is_fullscreen_foreground(&mon);
+            let (autohide_on, shown) = taskbar_autohide_state();
+            set_hide(&w, HIDE_FLYOUT, flyout);
+            set_hide(&w, HIDE_FULLSCREEN, full);
+            set_hide(&w, HIDE_AUTOHIDE, autohide_on && !shown);
         }
     });
 }
@@ -646,6 +874,7 @@ fn main() {
     let global_mode = std::env::args().any(|a| a == "--global");
 
     tauri::Builder::default()
+        .invoke_handler(tauri::generate_handler![get_settings, save_settings, reset_stats])
         .setup(move |app| {
             let win = app
                 .get_webview_window("ocean")
@@ -657,7 +886,7 @@ fn main() {
             {
                 spawn_layout_watch(&win);
                 spawn_hover_watch(&win);
-                spawn_flyout_guard(&win);
+                spawn_visibility_guard(&win);
             }
             win.show().ok();
 
@@ -682,12 +911,14 @@ fn main() {
                             win32::GetWindowLongW(h, win32::GWL_EXSTYLE) & win32::WS_EX_TOPMOST != 0
                         };
                         let visible = unsafe { win32::IsWindowVisible(h) } != 0;
-                        // 兜底抢层（事件钩子为主，这里防漏）
-                        unsafe {
-                            win32::SetWindowPos(
-                                h, win32::HWND_TOPMOST, 0, 0, 0, 0,
-                                win32::SWP_NOMOVE | win32::SWP_NOSIZE | win32::SWP_NOACTIVATE,
-                            );
+                        // 兜底抢层（事件钩子为主，这里防漏）；设置窗口开着时不抢
+                        if !SETTINGS_OPEN.load(Ordering::Relaxed) {
+                            unsafe {
+                                win32::SetWindowPos(
+                                    h, win32::HWND_TOPMOST, 0, 0, 0, 0,
+                                    win32::SWP_NOMOVE | win32::SWP_NOSIZE | win32::SWP_NOACTIVATE,
+                                );
+                            }
                         }
                         // 仅状态变化时记录（避免日志无限增长）
                         if last_logged != Some((topmost, visible)) {
@@ -712,8 +943,9 @@ fn main() {
 
             // ---- 托盘：三层退出之第 2 层（暂停 / 恢复 / 退出）----
             let toggle = MenuItem::with_id(app, "toggle", "暂停 / 恢复监听", true, None::<&str>)?;
+            let settings = MenuItem::with_id(app, "settings", "设置…（也可双击海面）", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&toggle, &quit])?;
+            let menu = Menu::with_items(app, &[&toggle, &settings, &quit])?;
             TrayIconBuilder::with_id("main")
                 .icon(default_icon())
                 .tooltip("几何任务栏小插件")
@@ -723,6 +955,7 @@ fn main() {
                         let now = !PAUSED.load(Ordering::Relaxed);
                         PAUSED.store(now, Ordering::Relaxed);
                     }
+                    "settings" => open_settings(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })

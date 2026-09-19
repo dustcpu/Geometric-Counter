@@ -163,4 +163,30 @@ assert.ok(GOW.trail.count() > 0, '五主题下粒子生成均不应崩溃');
 GOW.theme.setAuto();            // 还原自动模式
 console.log('✓ 五主题显式遍历（四季 + 夜间粒子生成/字段完整性）');
 
+// ---- 设置面板用到的两个接口（2026-09-19 新增）----
+// ① 粒子开关：clear() 清空池
+GOW.trail.onKey();
+GOW.trail.onKey();
+assert.ok(GOW.trail.count() > 0, '清空前应有粒子');
+GOW.trail.clear();
+assert.strictEqual(GOW.trail.count(), 0, 'clear() 应清空粒子池');
+console.log('✓ 粒子开关：clear() 清空池');
+
+// ② 重置统计：清空计数与徽章进度，并立即落盘
+var savedSeen = null;
+GOW.achievements.init({
+  storage: { load: function () { return null; }, save: function (s) { savedSeen = s; } },
+  renderBadges: function () { },
+  setTotal: function () { }
+});
+var before = GOW.achievements.stats().total;   // 前面的用例已经累积过计数
+for (var r = 0; r < 5; r++) GOW.achievements.recordKey('leftMain');
+assert.strictEqual(GOW.achievements.stats().total, before + 5, '再记录 5 次');
+GOW.achievements.reset();
+assert.strictEqual(GOW.achievements.stats().total, 0, 'reset 后累计应归零');
+assert.strictEqual(GOW.achievements.stats().unlockedLevel, 0, 'reset 后徽章进度应归零');
+assert.deepStrictEqual(GOW.achievements.stats().zones, {}, 'reset 后分区统计应清空');
+assert.ok(savedSeen && savedSeen.total === 0, 'reset 应立即落盘（存档被覆盖为 0）');
+console.log('✓ 重置统计：计数/徽章/分区归零且立即落盘');
+
 console.log('\n全部通过 ✔');
