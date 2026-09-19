@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>解锁</title>
+<style>
+  /* ============ 解锁小窗（320×120，右下角，2.6s 后自动隐藏）============
+     ⚠️ 窗口是不透明的（本机 WebView2 真透明会渲染成白膜），所以这里画的就是
+     一块深色卡片；圆角由 Rust 侧的 SetWindowRgn 裁出（见 main.rs 的 apply_unlock_region）。
+     不在这里写 border-radius —— 那会让描边在直角处露出来。 */
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #1e2129; }
+  .card {
+    display: flex; align-items: center; gap: 14px;
+    height: 100%; box-sizing: border-box;
+    padding: 0 18px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: #1e2129;
+  }
+  canvas { width: 58px; height: 58px; flex: 0 0 auto; }
+  .t1 { font: 600 16px/1.25 "Microsoft YaHei", "Segoe UI", sans-serif; color: #dce9f7; }
+  .t2 { font: 12px/1.45 "Microsoft YaHei", "Segoe UI", sans-serif; color: #8ba3bd; margin-top: 5px; }
+  .t3 { font: 11px/1.4 "Microsoft YaHei", "Segoe UI", sans-serif; color: #6d829a; margin-top: 3px; }
+  .wrap { opacity: 0; transform: translateY(7px); transition: opacity .34s ease, transform .34s ease; }
+  .wrap.in { opacity: 1; transform: none; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <canvas id="cv" width="116" height="116"></canvas>
+    <div class="wrap" id="wrap">
+      <div class="t1" id="t1">解锁</div>
+      <div class="t2" id="t2"></div>
+      <div class="t3" id="t3"></div>
+    </div>
+  </div>
+
+  <script src="src/config.js?v=20260919-8"></script>
+  <script src="src/theme.js?v=20260919-8"></script>
+  <script src="src/shapes.js?v=20260919-8"></script>
+  <script>
+  (function () {
+    var cfg = GOW.config;
+    var cv = document.getElementById('cv');
+    var ctx = cv.getContext('2d');
+    var wrap = document.getElementById('wrap');
+    var t1 = document.getElementById('t1'), t2 = document.getElementById('t2'), t3 = document.getElementById('t3');
+
+    // 各几何体的「基准 y」修正（drawShape 的 py 语义按类型不同）：
+    //   锥/棱锥 py 是底面、八面体与彭罗斯是中心、柱/立方体是顶面中心
+    function shapePy(type, cy, A) {
+      if (type === 'pyramid' || type === 'cone') return cy + A * 0.85;
+      if (type === 'octahedron' || type === 'penrose') return cy;
+      return cy - A * 0.15;      // cube / cylinder / hexPrism
+    }
+
+    function paint(level) {
+      var info = cfg.levels[level - 1];
+      if (!info) return;
+      // 主题色按当前月份/时刻自动取（大 dt + reduced → 一步到位，不做插值）
+      try { GOW.theme.update(1, true); } catch (e) { }
+      var colors = GOW.theme.display;
+
+      var dpr = 2, W = 58, H = 58;
+      cv.width = W * dpr; cv.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+
+      var scale = 0.72;                       // 图形宽约 40px
+      var A = 28 * scale;
+      GOW.drawShape(
+        ctx, colors, { type: info.type }, W / 2, shapePy(info.type, H / 2, A),
+        scale, 0.95, { lineWidth: 1.3, dashPattern: [4, 3] }
+      );
+
+      var noPool = info.pool === false;
+      t1.textContent = (noPool ? '图腾点亮 · ' : '解锁 · ') + info.name;
+      t2.textContent = '累计 ' + info.at.toLocaleString('zh-CN') + ' 次 · 第 ' + level + ' / ' + cfg.levels.length + ' 级';
+      t3.textContent = noPool
+        ? '全部几何体已放生 · 成就区图腾已点亮'
+        : '它已加入随机浮出';
+
+      // 重放入场动画
+      wrap.classList.remove('in');
+      void wrap.offsetWidth;
+      wrap.classList.add('in');
+    }
+
+    // Rust 通过 eval 推 window.__UNLOCK = <level>
+    var last = 0;
+    setInterval(function () {
+      var lv = window.__UNLOCK | 0;
+      if (lv > 0 && lv !== last) { last = lv; paint(lv); }
+    }, 100);
+
+    // 预览用：unlock.html#4 直接渲染第 4 级（headless 截图核对布局，不影响正式运行）
+    var m = /#(\d+)/.exec(location.hash);
+    if (m) { last = +m[1]; paint(last); }
+  })();
+  </script>
+</body>
+</html>

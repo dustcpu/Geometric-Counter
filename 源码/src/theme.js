@@ -53,19 +53,23 @@ GOW.theme = (function () {
 
   var mode = 'day';
   // 季节按真实月份（3–5 春 / 6–8 夏 / 9–11 秋 / 12–2 冬）
-  var season = (function () {
-    var m = new Date().getMonth();
+  function seasonByMonth(d) {
+    var m = (d || new Date()).getMonth();
     if (m >= 2 && m <= 4) return 'spring';
     if (m >= 5 && m <= 7) return 'summer';
     if (m >= 8 && m <= 10) return 'autumn';
     return 'winter';
-  })();
-  var auto = true;          // 自动模式：按本地时间判昼夜
+  }
+  var season = seasonByMonth();
+  var auto = true;          // 自动模式：昼夜看时刻、季节看月份
   var lastSynced = '';      // body 类名去重（避免每帧 classList 写入）
 
   function autoApply() {
     if (!auto) return;
-    var h = new Date().getHours();
+    var now = new Date();
+    var s = seasonByMonth(now);
+    if (s !== season) season = s;   // 跨月自动换季（长期不重启也不会停在旧季节）
+    var h = now.getHours();
     mode = (h >= cfg.nightFrom || h < cfg.nightTo) ? 'night' : 'day';
   }
 
@@ -111,7 +115,10 @@ GOW.theme = (function () {
   // ---- 演示控制（阶段二会移除手动切换）----
   function setMode(m)   { auto = false; mode = m; syncBody(true); }
   function setSeason(s) { auto = false; season = s; mode = 'day'; syncBody(true); }
-  function setAuto()    { auto = true; syncBody(true); }
+  // ★ 2026-09-19 修 bug：原实现只置 auto=true，season 仍停在上一次手动选的季节
+  //   → 手动点过「春」之后再点「自动」，季节一直是春，看着就是「自动没效果」。
+  //   自动 = 昼夜看时刻、季节看月份，所以这里必须把季节也拉回「按月份」。
+  function setAuto()    { season = seasonByMonth(); auto = true; syncBody(true); }
 
   return {
     display: display,

@@ -47,8 +47,23 @@ GOW.config = {
   // ★ 2026-09-17：菱形格点退役，改为随机起伏的波浪线（ocean.js 生成，Dust：更有质感）
   waterColor: [115, 170, 225],
 
-  // ---- 成就阶梯（8 级等比）----
-  thresholds: [100, 200, 400, 700, 1300, 2400, 4300, 7700],
+  // ---- 成就阶梯（★ 2026-09-19 重设）----
+  // 语义：不再「集齐徽章」，而是「逐步把几何体放生到随机浮出池」——
+  //   初始只会浮出正方体；每过一级，对应的一种几何体进入随机池。
+  //   成就区永久陈列自转的彭罗斯三角（未全解锁时半透明）。
+  // 旧版 100…7700 太易达顶（Dust 几天测试就逼近最高级）。
+  // `pool: false` = 该级只做荣誉（点亮图腾），**不放生几何体进池**——
+  //   彭罗斯三角按 Dust 2026-09-19 的要求只留在成就区，不从水里浮出来。
+  // ⚠️ 想调难度只改这里的 at；thresholds 由它派生，其余代码全部读派生值。
+  levels: [
+    { at: 1000,   type: 'pyramid',    name: '三棱锥' },
+    { at: 4000,   type: 'cylinder',   name: '圆柱' },
+    { at: 15000,  type: 'cone',       name: '圆锥' },
+    { at: 60000,  type: 'octahedron', name: '正八面体' },
+    { at: 200000, type: 'hexPrism',   name: '六棱柱' },
+    { at: 600000, type: 'penrose',    name: '彭罗斯三角', pool: false }
+  ],
+  baseTypes: ['cube'],      // 一开始就能浮出的几何体（未解锁任何级别时）
 
   // ---- 持久化（方案 A：单文件累计）----
   storageKey: 'gow_stats_v1',   // 网页版用 localStorage；桌面版换文件
@@ -61,3 +76,6 @@ GOW.config = {
 // 派生坐标：喷泉/成就区跟随项目区左缘，避免以后挪动时漏改
 GOW.config.fountain.x = GOW.config.zone.x;
 GOW.config.achievements.x = GOW.config.zone.x + GOW.config.fountain.width;
+
+// 派生：阈值表（保持旧接口，成就模块的 levelFor 直接读它，勿手改）
+GOW.config.thresholds = GOW.config.levels.map(function (l) { return l.at; });

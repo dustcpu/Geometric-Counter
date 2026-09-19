@@ -162,6 +162,19 @@ GOW.drawShape = function (ctx, colors, s, px, py, scale, alpha, opts) {
     line(oR, oB, SOLID, false);
     line(oB, oL, SOLID, false);
 
+  } else if (s.type === 'penrose') {
+    // 彭罗斯三角（不可能图形）—— 2026-09-19 新增。
+    // ⚠️ 当前**不会**从水里浮出：Dust 2026-09-19 明确要求它只留在成就区当图腾
+    //   （config.js 里最高一级标了 pool: false）。这里保留绘制能力，供解锁弹窗
+    //   （unlock.html 用它画图标）以及日后需要时复用。
+    // 顶点取自 badges.js 的 104×104 视框（内容中心 52,42），同比缩放到与其它几何体相当：
+    // 内容宽 88 → 约 2A（≈18px），故 k = A/44。三块面板各自闭合描边。
+    var pk = A / 44;
+    function pp(x, y) { return { x: px + (x - 52) * pk, y: py + (y - 42) * pk }; }
+    poly([pp(8, 72), pp(77, 72), pp(72, 64), pp(22, 64), pp(56, 4), pp(46, 4)], SOLID, false, true);
+    poly([pp(8, 72), pp(12, 80), pp(92, 80), pp(56, 21), pp(51.5, 27.5), pp(77, 72)], SOLID, false, true);
+    poly([pp(92, 80), pp(96, 72), pp(56, 4), pp(22, 64), pp(31, 64), pp(56, 21)], SOLID, false, true);
+
   } else { // hexPrism 六棱柱
     var hR = A;                          // 六边形外接半径（=顶面半宽）
     var hQ = A * Math.sqrt(3) / 4;       // 前后顶点竖直偏移

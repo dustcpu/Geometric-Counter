@@ -37,8 +37,14 @@ GOW.fountain = (function () {
     return cfg.fountain.x + cfg.fountain.slotGap / 2 + i * cfg.fountain.slotGap;
   }
 
-  // ★ 六体随机生成
+  // ★ 随机浮出池（2026-09-19 起由成就系统接管）：
+  //   初始只有正方体，每解锁一级「放生」一种新几何体，最后一级放出彭罗斯三角。
+  //   默认值仅为兜底（网页演示版未接成就池时用），实际由 setPool 覆盖。
   var TYPE_POOL = ['cube', 'pyramid', 'cylinder', 'cone', 'octahedron', 'hexPrism'];
+
+  function setPool(list) {
+    if (list && list.length) TYPE_POOL = list.slice();
+  }
 
   function newShape(type, zone) {
     return {
@@ -281,6 +287,8 @@ GOW.fountain = (function () {
       var n = 0;
       for (var i = 0; i < slots.length; i++) if (slots[i].s) n++;
       return n;
-    }
+    },
+    setPool: setPool,
+    pool: function () { return TYPE_POOL.slice(); }
   };
 })();

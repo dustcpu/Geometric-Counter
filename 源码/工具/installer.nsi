@@ -56,7 +56,7 @@ Section "安装" SecInstall
 
   ; 注册到「应用和功能」（HKCU，免管理员）
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "DisplayName" "几何任务栏小插件（预览版）"
-  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "DisplayVersion" "0.1.1"
+  WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "DisplayVersion" "0.1.2"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "Publisher" "内测版"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "UninstallString" '"$INSTDIR\卸载.exe"'
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\GeometricCounter" "DisplayIcon" "$INSTDIR\geometric-ocean.exe"

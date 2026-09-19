@@ -133,6 +133,8 @@ mod win32 {
 // 换机器/换分辨率都能自愈；中间图标区用窗口区域挖空，既不遮挡也不拦点击。
 const LEFT_BAND_W: f64 = 468.0;        // 海面卡默认宽
 const RIGHT_BAND_W: f64 = 247.0;       // 粒子卡默认宽
+const UNLOCK_W: f64 = 320.0;           // 解锁弹窗尺寸（逻辑）：右下角短暂出现
+const UNLOCK_H: f64 = 120.0;
 
 /// 悬停监视 + 双击检测（穿透模式下网页收不到鼠标事件，只能由 Rust 代看）：
 /// 每 50ms 查一次光标位置（驱动悬停高亮）与左键状态（按下沿 + 450ms 窗口判双击）。
@@ -189,45 +191,82 @@ fn spawn_hover_watch(win: &tauri::WebviewWindow) {
     });
 }
 
-/// 打开（或唤起）设置窗口。首次双击时创建，之后复用。
+/// 唤起设置窗口。窗口在启动时就预创建好并隐藏，这里只负责显示——
+/// 全部是线程安全的「操作已有窗口」调用，可从守卫线程直接调。
 /// 打开期间暂停主窗口抢层，否则主窗口会把设置窗口压住。
 fn open_settings(app: &tauri::AppHandle) {
-    if let Some(w) = app.get_webview_window("settings") {
-        SETTINGS_OPEN.store(true, Ordering::Relaxed);
-        w.show().ok();
-        w.set_focus().ok();
-        return;
-    }
-    let built = tauri::WebviewWindowBuilder::new(
-        app,
-        "settings",
-        tauri::WebviewUrl::App("settings.html".into()),
-    )
-    .title("几何任务栏小插件 · 设置")
-    .inner_size(520.0, 700.0)
-    .resizable(false)
-    .center()
-    .build();
-    match built {
-        Ok(w) => {
+    match app.get_webview_window("settings") {
+        Some(w) => {
+            diag_log("settings: show");
             SETTINGS_OPEN.store(true, Ordering::Relaxed);
+            w.show().ok();
+            w.set_focus().ok();
             let _ = w.set_always_on_top(true);
-            let app2 = app.clone();
-            w.on_window_event(move |e| {
-                if let tauri::WindowEvent::Destroyed = e {
-                    SETTINGS_OPEN.store(false, Ordering::Relaxed);
-                    // 主窗口重新拿回置顶
-                    if let Some(main) = app2.get_webview_window("ocean") {
-                        main.set_always_on_top(true).ok();
-                    }
-                }
-            });
         }
-        Err(e) => {
-            // 设置窗口打不开不该影响主程序
-            SETTINGS_OPEN.store(false, Ordering::Relaxed);
-            eprintln!("[geometric-ocean] 创建设置窗口失败: {}", e);
+        None => diag_log("settings: 窗口不存在（预创建失败？）"),
+    }
+}
+
+// ---- 解锁弹窗（成就升级时的短暂提示，2026-09-19 新增）----
+// 窗口在启动时预创建并隐藏；升级时页面 `invoke('show_unlock')` → 摆到右下角、显示 2.6s。
+// 全部是「操作已有窗口」，线程安全；创建则和设置窗口一样必须留在主线程（setup 里预创建）。
+
+/// 给弹窗裁圆角。它是不透明窗口（真透明在本机 WebView2 上会白膜），
+/// 所以圆角只能靠 SetWindowRgn —— 这时候**不要**在页面里写 border-radius，
+/// 否则描边会在被裁掉的直角处露出一截。
+#[cfg(windows)]
+fn apply_unlock_region(win: &tauri::WebviewWindow) {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let w = (UNLOCK_W * scale).round() as i32;
+    let h = (UNLOCK_H * scale).round() as i32;
+    let diam = (28.0 * scale).round() as i32;   // 椭圆直径 = 圆角半径 ×2（半径 14 逻辑）
+    if let Ok(hw) = win.hwnd() {
+        unsafe {
+            let rgn = win32::CreateRoundRectRgn(0, 0, w, h, diam, diam);
+            if rgn != 0 {
+                win32::SetWindowRgn(hw.0 as isize, rgn, 1);
+            }
         }
+    }
+}
+
+/// 摆到主屏右下角：离右边 24、离任务栏上沿 18（任务栏 48 逻辑高）
+#[cfg(windows)]
+fn place_unlock_bottom_right(win: &tauri::WebviewWindow) {
+    let scale = win.scale_factor().unwrap_or(1.0);
+    let w = (UNLOCK_W * scale).round() as i32;
+    let h = (UNLOCK_H * scale).round() as i32;
+    if let Ok(Some(mon)) = win.primary_monitor() {
+        let sw = mon.size().width as i32;
+        let sh = mon.size().height as i32;
+        let x = sw - w - (24.0 * scale).round() as i32;
+        let y = sh - (48.0 * scale).round() as i32 - h - (18.0 * scale).round() as i32;
+        win.set_position(tauri::PhysicalPosition::new(x, y)).ok();
+    }
+}
+
+/// 命令：显示解锁弹窗（页面在成就升级时调用）
+#[tauri::command]
+fn show_unlock(app: tauri::AppHandle, level: u32) {
+    if let Some(w) = app.get_webview_window("unlock") {
+        let _ = w.eval(&format!("window.__UNLOCK = {};", level));
+        #[cfg(windows)]
+        {
+            apply_unlock_region(&w);
+            place_unlock_bottom_right(&w);
+        }
+        let _ = w.show();
+        diag_log(&format!("unlock: show level={}", level));
+        // 2.6s 后自动隐藏（连升两级时后一次覆盖前一次的计时，无害）
+        let app2 = app.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(2600));
+            if let Some(w2) = app2.get_webview_window("unlock") {
+                let _ = w2.hide();
+            }
+        });
+    } else {
+        diag_log("unlock: 窗口不存在（预创建失败？）");
     }
 }
 
@@ -394,7 +433,13 @@ fn apply_layout(win: &tauri::WebviewWindow, lay: Layout, rev: u32) {
 
     // 2) 圆角区域（窗口局部物理像素）
     let h = (48.0 * scale).round() as i32;
-    let inset_x = (1.0 * scale).round() as i32;
+    // ★ x 方向必须与卡片矩形**完全对齐**，不能内缩（Dust 2026-09-19 实测修正）：
+    //   页面把卡片放在 zone 原点、宽度 zone_w；若这里内缩 1px（region = 1..zone_w-1），
+    //   卡片左右竖边（各占 1px：0..1 与 zone_w-1..zone_w）就正好落在 region 外被裁掉
+    //   → 表现为「上下两条横线完整、竖边却看不见/只剩圆角残弧」，看着亮度不匀、很怪。
+    //   圆角归属：region 半径（diam 18 逻辑 → 半径 9）> 卡片 border-radius（8），
+    //   且圆心仅差 1px，弧线始终包住卡片描边，不会切到圆角。
+    let inset_x = 0_i32;
     let inset_t = (2.0 * scale).round() as i32;
     let inset_b = (1.0 * scale).round() as i32;
     let diam = (18.0 * scale).round() as i32;
@@ -564,6 +609,18 @@ fn diag_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(name)
 }
 
+/// 追加一行诊断（与 ocean-state.log 同一个文件，便于远程取证）
+fn diag_log(line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(diag_path("ocean-state.log"))
+    {
+        let _ = writeln!(f, "{}", line);
+    }
+}
+
 /// 单实例锁：同名互斥体已存在 → 说明已有实例在跑，直接退出。
 /// （避免双击两次启动脚本造成窗口重叠 + 按键双倍计数）
 #[cfg(windows)]
@@ -700,6 +757,7 @@ fn taskbar_autohide_state() -> (bool, bool) {
 #[cfg(windows)]
 fn spawn_visibility_guard(win: &tauri::WebviewWindow) {
     let w = win.clone();
+    let app = win.app_handle().clone();
     std::thread::spawn(move || {
         let (mon_w, mon_h) = w
             .primary_monitor()
@@ -709,6 +767,12 @@ fn spawn_visibility_guard(win: &tauri::WebviewWindow) {
             .unwrap_or((1920, 1080));
         loop {
             std::thread::sleep(std::time::Duration::from_millis(150));
+            // 自愈：设置窗口已不存在却还压着抢层标志 → 复位。
+            // （标志卡住会让主窗口永远不抢层，于是被任务栏盖住 = 看起来「消失不再出现」）
+            if SETTINGS_OPEN.load(Ordering::Relaxed) && app.get_webview_window("settings").is_none() {
+                SETTINGS_OPEN.store(false, Ordering::Relaxed);
+                diag_log("settings: 抢层标志自愈（窗口已不存在）");
+            }
             let mon = win32::RECT { left: 0, top: 0, right: mon_w, bottom: mon_h };
             let flyout = is_shell_flyout_foreground();
             let full = is_fullscreen_foreground(&mon);
@@ -867,6 +931,11 @@ fn default_icon() -> tauri::image::Image<'static> {
 }
 
 fn main() {
+    // panic 在 windows_subsystem 下没有 stderr、静默退出，极难查 → 一律写进诊断日志
+    std::panic::set_hook(Box::new(|info| {
+        diag_log(&format!("PANIC: {}", info));
+    }));
+
     // 单实例：已有实例在跑则静默退出
     #[cfg(windows)]
     ensure_single_instance();
@@ -874,7 +943,7 @@ fn main() {
     let global_mode = std::env::args().any(|a| a == "--global");
 
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![get_settings, save_settings, reset_stats])
+        .invoke_handler(tauri::generate_handler![get_settings, save_settings, reset_stats, show_unlock])
         .setup(move |app| {
             let win = app
                 .get_webview_window("ocean")
@@ -980,8 +1049,101 @@ fn main() {
                         .build(),
                 )?;
             }
+
+            // ---- 设置窗口：启动时就创建好并隐藏 ----
+            // 不在双击那一刻创建：运行时构造窗口要跨事件循环，链路长、失败面大；
+            // 预创建只付出一次启动开销，之后双击立刻显示。
+            // 关闭走「隐藏」而非销毁（CloseRequested + prevent_close），再双击瞬间回来。
+            //
+            // ★ 用 catch_unwind 兜住：万一创建过程 panic，**只能影响设置面板**，
+            //   绝不能把整片海一起带走（2026-09-19 教训：一个 panic 直接送走整个进程）。
+            let app_ref: &tauri::App = app;
+            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tauri::WebviewWindowBuilder::new(
+                    app_ref,
+                    "settings",
+                    tauri::WebviewUrl::App("settings.html".into()),
+                )
+                .title("几何任务栏小插件 · 设置")
+                .inner_size(520.0, 700.0)
+                .resizable(false)
+                .center()
+                .visible(false)
+                // ⚠️ 必须与主窗口（tauri.conf.json 的 additionalBrowserArgs）一致：
+                //   同一 WebView2 环境下各 webview 的浏览器参数不同会导致创建失败
+                .additional_browser_args(
+                    "--disable-features=CalculateNativeWinOcclusion --disable-background-timer-throttling",
+                )
+                .build()
+            }));
+            match built {
+                Ok(Ok(sw)) => {
+                    let app_for_close = app.handle().clone();
+                    sw.on_window_event(move |e| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = e {
+                            api.prevent_close();      // 只隐藏，不销毁
+                            SETTINGS_OPEN.store(false, Ordering::Relaxed);
+                            if let Some(w) = app_for_close.get_webview_window("settings") {
+                                w.hide().ok();
+                            }
+                            // 主窗口重新拿回置顶
+                            if let Some(main) = app_for_close.get_webview_window("ocean") {
+                                main.set_always_on_top(true).ok();
+                            }
+                            diag_log("settings: hidden");
+                        }
+                    });
+                    diag_log("settings: pre-created");
+                }
+                Ok(Err(e)) => diag_log(&format!("settings: pre-create failed: {}", e)),
+                Err(_) => diag_log("settings: pre-create PANICKED（已拦截，主程序继续；设置面板不可用）"),
+            }
+
+            // ---- 解锁弹窗窗口：同样预创建（右下角 320×120，点击穿透）----
+            // 只在成就升级时短暂显示；同样用 catch_unwind 隔离，坏了也不影响海面。
+            let built2 = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                tauri::WebviewWindowBuilder::new(
+                    app_ref,
+                    "unlock",
+                    tauri::WebviewUrl::App("unlock.html".into()),
+                )
+                .title("解锁")
+                .inner_size(UNLOCK_W, UNLOCK_H)
+                .resizable(false)
+                .decorations(false)
+                .shadow(false)
+                .skip_taskbar(true)
+                .always_on_top(true)
+                .focused(false)
+                .visible(false)
+                .additional_browser_args(
+                    "--disable-features=CalculateNativeWinOcclusion --disable-background-timer-throttling",
+                )
+                .build()
+            }));
+            match built2 {
+                Ok(Ok(uw)) => {
+                    let _ = uw.set_ignore_cursor_events(true);   // 点击穿透：绝不挡任何操作
+                    #[cfg(windows)]
+                    apply_unlock_region(&uw);
+                    diag_log("unlock: pre-created");
+                }
+                Ok(Err(e)) => diag_log(&format!("unlock: pre-create failed: {}", e)),
+                Err(_) => diag_log("unlock: pre-create PANICKED（已拦截，主程序继续；弹窗不可用）"),
+            }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running geometric-ocean");
+        .build(tauri::generate_context!())
+        .expect("error while building geometric-ocean")
+        .run(|_app, event| match event {
+            // 退出原因与被销毁的窗口都留痕——静默退出时靠它定位
+            tauri::RunEvent::ExitRequested { .. } => diag_log("app: ExitRequested"),
+            tauri::RunEvent::Exit => diag_log("app: Exit"),
+            tauri::RunEvent::WindowEvent { label, event, .. } => {
+                if let tauri::WindowEvent::Destroyed = event {
+                    diag_log(&format!("win[{}]: Destroyed", label));
+                }
+            }
+            _ => {}
+        });
 }

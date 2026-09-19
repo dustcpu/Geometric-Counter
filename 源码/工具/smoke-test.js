@@ -68,6 +68,7 @@ var savedPayload = null;
 var saveCount = 0;
 var rendered = { count: -1, animateFrom: -1, calls: 0 };
 var totalText = '';
+var unlockedSeen = [];          // onUnlock 只在「实时升级」时触发
 GOW.achievements.init({
   storage: {
     load: function () { return null; },
@@ -76,29 +77,56 @@ GOW.achievements.init({
   renderBadges: function (count, animateFrom) {
     rendered = { count: count, animateFrom: animateFrom, calls: rendered.calls + 1 };
   },
-  setTotal: function (text) { totalText = text; }
+  setTotal: function (text) { totalText = text; },
+  onUnlock: function (lv) { unlockedSeen.push(lv); }
 });
 
+// 阶梯（★ 2026-09-19：旧 100…7700 太易达顶 → 重设；再按 Dust 反馈把前几级加密
+//   「5700 次时应已有 3 种几何体」+ 末级从 200 万降到 60 万）
+assert.strictEqual(GOW.config.thresholds.length, 6, '阶梯应为 6 级');
+assert.deepStrictEqual(GOW.config.thresholds, [1000, 4000, 15000, 60000, 200000, 600000],
+  'thresholds 应由 levels 正确派生');
 assert.strictEqual(GOW.achievements.levelFor(0), 0);
-assert.strictEqual(GOW.achievements.levelFor(99), 0);
-assert.strictEqual(GOW.achievements.levelFor(100), 1);
-assert.strictEqual(GOW.achievements.levelFor(101), 1);
-assert.strictEqual(GOW.achievements.levelFor(7700), 8);
-assert.strictEqual(GOW.achievements.levelFor(99999), 8);
-console.log('✓ 8 级等比阶梯边界正确');
+assert.strictEqual(GOW.achievements.levelFor(999), 0);
+assert.strictEqual(GOW.achievements.levelFor(1000), 1);
+assert.strictEqual(GOW.achievements.levelFor(3999), 1);
+assert.strictEqual(GOW.achievements.levelFor(4000), 2);
+// ★ 回归：Dust 实测 5700 次时抱怨「只有两种几何体」——按新表这里必须是第 2 级（3 种池）
+assert.strictEqual(GOW.achievements.levelFor(5700), 2, '5700 次应为第 2 级');
+assert.strictEqual(GOW.achievements.levelFor(15000), 3);
+assert.strictEqual(GOW.achievements.levelFor(60000), 4);
+assert.strictEqual(GOW.achievements.levelFor(200000), 5);
+assert.strictEqual(GOW.achievements.levelFor(600000), 6);
+assert.strictEqual(GOW.achievements.levelFor(99999999), 6, '超过最高级不再增长');
+// 彭罗斯三角只留在成就区：最高级 pool=false，不进随机池
+assert.strictEqual(GOW.config.levels[5].pool, false, '最高级不放生几何体');
+assert.strictEqual(GOW.config.levels.filter(function (l) { return l.pool !== false; }).length, 5,
+  '可放生的几何体共 5 种');
+console.log('✓ 阶梯边界正确（6 级：1千 / 4千 / 1.5万 / 6万 / 20万 / 60万；末级只点亮图腾）');
 
-for (var k = 0; k < 100; k++) GOW.achievements.recordKey('leftMain');
-assert.strictEqual(GOW.achievements.stats().total, 100);
-assert.strictEqual(GOW.achievements.stats().zones.leftMain, 100);
+for (var k = 0; k < 1000; k++) GOW.achievements.recordKey('leftMain');
+assert.strictEqual(GOW.achievements.stats().total, 1000);
+assert.strictEqual(GOW.achievements.stats().zones.leftMain, 1000);
 assert.strictEqual(GOW.achievements.stats().unlockedLevel, 1);
 assert.strictEqual(rendered.count, 1, '解锁后徽章渲染数 = 1');
 assert.ok(saveCount >= 1, '解锁瞬间落盘');
-assert.strictEqual(savedPayload.total, 100);
+assert.strictEqual(savedPayload.total, 1000);
 assert.strictEqual(savedPayload.unlockedLevel, 1);
 // 今日计数（2026-09-17 新增）：recordKey 累加 + 落盘携带 today 字段
-assert.strictEqual(GOW.achievements.stats().today.count, 100, '今日计数应同步累加');
-assert.strictEqual(savedPayload.today.count, 100, '落盘应包含 today');
+assert.strictEqual(GOW.achievements.stats().today.count, 1000, '今日计数应同步累加');
+assert.strictEqual(savedPayload.today.count, 1000, '落盘应包含 today');
 assert.ok(/\d{4}-\d{2}-\d{2}/.test(savedPayload.today.date), 'today.date 为日期串');
+
+// ★ 新成就语义（2026-09-19）：解锁 = 把对应几何体「放生」进随机浮出池
+assert.deepStrictEqual(GOW.achievements.unlockedTypes(), ['cube', 'pyramid'],
+  '未解锁时池 = 基础池；第 1 级后 = 正方体 + 三棱锥');
+assert.strictEqual(GOW.achievements.levelInfo(2).name, '圆柱', '第 2 级信息');
+assert.strictEqual(GOW.achievements.levelInfo(0), null, 'levelInfo 越界 → null');
+assert.strictEqual(GOW.achievements.levelInfo(7), null, 'levelInfo 超上限 → null');
+assert.deepStrictEqual(unlockedSeen, [1], '实时升到第 1 级应触发一次 onUnlock');
+GOW.fountain.setPool(GOW.achievements.unlockedTypes());
+assert.deepStrictEqual(GOW.fountain.pool(), ['cube', 'pyramid'], 'setPool 生效');
+console.log('✓ 新成就语义：解锁 → 放生几何体进随机池（onUnlock 实时触发）');
 // recordKey 不再直接写文本（滚动动画是唯一写入方），setTotal 仅 init 时调用一次
 assert.strictEqual(totalText, '累计 0', 'setTotal 仅 init 调用：' + totalText);
 
@@ -107,20 +135,41 @@ for (var k2 = 0; k2 < 50; k2++) {
   GOW.achievements.recordKey('rightMain');
   GOW.fountain.trySpawn('rightMain');   // 槽满被丢，但计数已 +1
 }
-assert.strictEqual(GOW.achievements.stats().total, 150);
+assert.strictEqual(GOW.achievements.stats().total, 1050);
 assert.strictEqual(GOW.achievements.stats().zones.rightMain, 50);
 console.log('✓ 计数与动画解耦（槽满丢弃不影响计数）');
 
-// ---- 徽章表完整性 ----
-assert.strictEqual(GOW.BADGES.length, cfg.thresholds.length, '8 徽章 = 8 阈值');
+// ---- 徽章 SVG 完整性（★ 2026-09-19：徽章轮换退役，只剩彭罗斯三角当成就区常驻图腾）----
+assert.ok(GOW.BADGES.length >= 1, '徽章表非空');
 GOW.BADGES.forEach(function (b) {
   assert.ok(b.svg && b.svg.indexOf('<svg') === 0, b.id + ' SVG 存在');
 });
+assert.strictEqual(GOW.BADGES[GOW.BADGES.length - 1].id, 'penrose',
+  '末枚必须是彭罗斯三角（成就区图腾）');
+console.log('✓ 徽章 SVG 完整（末枚彭罗斯三角 = 成就区常驻图腾）');
+
+// ★ 回归断言（2026-09-19 修的 bug）：存档里的 unlockedLevel 一旦与 total 不符
+//   （阶梯改版后旧数字失真），init 必须按 total 重算 —— 否则随机池会放出
+//   「还不到阶段」的几何体（Dust 实测：旧表第 7 级残留 → 六种几何体全被放出来了）。
+GOW.achievements.init({
+  storage: {
+    load: function () {
+      return { total: 1000, zones: { leftMain: 1000 }, unlockedLevel: 7, today: { date: '', count: 0 } };
+    },
+    save: function () { }
+  },
+  renderBadges: function () { },
+  setTotal: function () { }
+});
+assert.strictEqual(GOW.achievements.stats().unlockedLevel, 1,
+  '失真的 unlockedLevel(7) 应按 total=1000 重算为 1');
+assert.deepStrictEqual(GOW.achievements.unlockedTypes(), ['cube', 'pyramid'],
+  '重算后随机池只应有 2 种，不含超额几何体');
+console.log('✓ 级别由累计派生（旧存档的失真级别会被纠正，池不放超额几何体）');
 assert.ok(GOW.BADGES[7].penrose === true, '第 8 枚是彭罗斯三角');
 // 彭罗斯坐标系红线：viewBox 必须为 min-x/min-y=0 的对称盒（重心=正中心），
 // 否则 transform-origin:50% 在部分引擎按 (0,0) 起算 → 旋转中心偏离 → 转角缺角
 assert.ok(GOW.BADGES[7].svg.indexOf('viewBox="0 0 104 104"') !== -1, '彭罗斯 viewBox 已重排为对称归零坐标系');
-console.log('✓ 徽章表完整（7 静态 + 彭罗斯）');
 
 // ---- 主题色表完整性 ----
 ['spring', 'summer', 'autumn', 'winter'].forEach(function (sn) {
@@ -162,6 +211,23 @@ GOW.trail.update(0.016);
 assert.ok(GOW.trail.count() > 0, '五主题下粒子生成均不应崩溃');
 GOW.theme.setAuto();            // 还原自动模式
 console.log('✓ 五主题显式遍历（四季 + 夜间粒子生成/字段完整性）');
+
+// ★ 回归断言（2026-09-19 修的 bug）：手动选过季节后再点「自动」，季节必须回到「按月份」。
+//   原实现只置 auto=true、season 留在手动值 → 点「自动」看不出变化。
+GOW.theme.setSeason('spring');
+assert.strictEqual(GOW.theme.season(), 'spring', '手动选春后 season 应为 spring');
+GOW.theme.setAuto();
+var expectSeason = (function () {
+  var m = new Date().getMonth();
+  if (m >= 2 && m <= 4) return 'spring';
+  if (m >= 5 && m <= 7) return 'summer';
+  if (m >= 8 && m <= 10) return 'autumn';
+  return 'winter';
+})();
+assert.strictEqual(GOW.theme.season(), expectSeason,
+  'setAuto() 应把季节拉回按月份（期望 ' + expectSeason + '，实际 ' + GOW.theme.season() + '）');
+assert.strictEqual(GOW.theme.isAuto(), true, 'setAuto() 后应处于自动模式');
+console.log('✓ 主题「自动」：手动选季后能回到按月份（回归断言）');
 
 // ---- 设置面板用到的两个接口（2026-09-19 新增）----
 // ① 粒子开关：clear() 清空池

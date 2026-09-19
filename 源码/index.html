@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>几何任务栏小插件 · 阶段一 Demo</title>
-<link rel="stylesheet" href="style.css?v=20260919-1">
+<link rel="stylesheet" href="style.css?v=20260919-8">
 </head>
 <body class="season-summer">
 
@@ -56,15 +56,15 @@
   </div>
 
   <!-- 模块（顺序依赖：config → theme/shapes/ocean/badges/keyboard → fountain/achievements） -->
-  <script src="src/config.js?v=20260919-1"></script>
-  <script src="src/theme.js?v=20260919-1"></script>
-  <script src="src/shapes.js?v=20260919-1"></script>
-  <script src="src/ocean.js?v=20260919-1"></script>
-  <script src="src/badges.js?v=20260919-1"></script>
-  <script src="src/keyboard-source.js?v=20260919-1"></script>
-  <script src="src/fountain.js?v=20260919-1"></script>
-  <script src="src/trail.js?v=20260919-1"></script>
-  <script src="src/achievements.js?v=20260919-1"></script>
+  <script src="src/config.js?v=20260919-8"></script>
+  <script src="src/theme.js?v=20260919-8"></script>
+  <script src="src/shapes.js?v=20260919-8"></script>
+  <script src="src/ocean.js?v=20260919-8"></script>
+  <script src="src/badges.js?v=20260919-8"></script>
+  <script src="src/keyboard-source.js?v=20260919-8"></script>
+  <script src="src/fountain.js?v=20260919-8"></script>
+  <script src="src/trail.js?v=20260919-8"></script>
+  <script src="src/achievements.js?v=20260919-8"></script>
   <script>
   (function () {
     var cfg = GOW.config;
@@ -89,26 +89,39 @@
     window.addEventListener('resize', fit);
     fit();
 
-    // ---- 成就区 DOM 渲染 ----
+    // ---- 成就区 DOM：永久陈列自转的彭罗斯三角（★ 2026-09-19 新语义，与桌面壳一致）----
+    // 不再是「最新解锁的那枚徽章」——改为「图腾常驻 + 逐级放生几何体」：
+    //   未集齐时半透明，全部放生后全亮。
     var badgesEl = document.getElementById('achvBadges');
     var totalEl = document.getElementById('achvTotal');
-    // 单枚陈列：新的成就顶替原来的，只显示最新解锁的徽章（Dust 2026-09-16）
-    function renderBadges(unlockedCount, animateFrom) {
-      badgesEl.innerHTML = '';
-      if (unlockedCount > 0) {
-        var i = unlockedCount - 1;
+    var TOTEM = GOW.BADGES[GOW.BADGES.length - 1];     // 彭罗斯三角
+    var totemReady = false;
+    function renderBadges(unlockedCount) {
+      if (!totemReady) {
         var div = document.createElement('div');
-        div.className = 'badge' + (unlockedCount > animateFrom ? ' badge-in' : '');
-        div.title = GOW.BADGES[i].name + '（' + cfg.thresholds[i] + ' 次解锁）';
-        div.innerHTML = GOW.BADGES[i].svg;
+        div.className = 'badge';
+        div.innerHTML = TOTEM.svg;
         badgesEl.appendChild(div);
+        totemReady = true;
       }
+      var done = unlockedCount >= cfg.levels.length;
+      badgesEl.style.opacity = done ? '1' : '0.42';
+      badgesEl.title = done
+        ? '彭罗斯三角 · 几何体已全部放生'
+        : '彭罗斯三角 · 已放生 ' + unlockedCount + ' / ' + cfg.levels.length + ' 种几何体';
+    }
+
+    // ★ 随机浮出池 = 基础池 + 已放生的几何体（成就驱动）
+    function applyPool() {
+      try { GOW.fountain.setPool(GOW.achievements.unlockedTypes()); } catch (e) { }
     }
 
     GOW.achievements.init({
       renderBadges: renderBadges,
-      setTotal: function () { }   // 滚动动画是数字的唯一写入方（避免两次写入打架）
+      setTotal: function () { },   // 滚动动画是数字的唯一写入方（避免两次写入打架）
+      onUnlock: function () { applyPool(); }   // 网页演示版：无弹窗，只放生几何体
     });
+    applyPool();
     // 数字缓动从已存值起步（加载时不从 0 滚，只有增量滚动）
     dispTotal = GOW.achievements.stats().total;
     dispToday = GOW.achievements.stats().today.count;

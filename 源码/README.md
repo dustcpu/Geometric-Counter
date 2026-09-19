@@ -50,16 +50,17 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 ├── index.html            浏览器演示版（阶段一的 1600×48 模拟带，可直接用浏览器打开）
 ├── shell.html            桌面壳页面（Tauri 窗口加载这个，只有海面卡 + 粒子卡）
 ├── settings.html         设置面板（双击海面打开的独立窗口，经 Tauri IPC 读写设置）
-├── style.css             两个页面共用的样式
+├── unlock.html           解锁弹窗（成就升级时右下角短暂出现的 320×120 小窗）
+├── style.css             三个页面共用的样式
 ├── src/                  前端九个模块（原生 JS，无框架、无构建步骤）
 │   ├── config.js         所有可调参数集中在此（尺寸/槽位/阶梯/运动参数）
 │   ├── theme.js          昼夜 × 四季色表与主题过渡
-│   ├── shapes.js         六种几何体的绘制（立方体/三棱锥/圆柱/圆锥/正八面体/六棱柱）
+│   ├── shapes.js         七种几何体绘制（六种会从水里浮出 + 彭罗斯三角，后者只用于图腾与弹窗）
 │   ├── ocean.js          波浪线 + 水面线（两端带渐隐画笔）
-│   ├── fountain.js       喷泉生命周期：浮出 → 悬停 → 衰减；满槽注入与蓄能发光
+│   ├── fountain.js       喷泉生命周期：浮出 → 悬停 → 衰减；满槽注入与蓄能发光；随机池由成就驱动
 │   ├── trail.js          右侧季节粒子（春花瓣/夏蒲公英/秋银杏/冬雪花/夜星尘）
-│   ├── badges.js         八个成就徽章 SVG（最后一枚是会自转的彭罗斯三角）
-│   ├── achievements.js   成就阶梯、计数、存档读写与合并
+│   ├── badges.js         成就徽章 SVG（现在只剩最后一枚在用：成就区常驻的彭罗斯三角图腾）
+│   ├── achievements.js   成就阶梯、计数、存档读写与合并；升级时回调「放生几何体 + 弹窗」
 │   └── keyboard-source.js 数据源抽象：页面内键盘 / 本地 WebSocket
 ├── src-tauri/            Rust 桌面壳
 │   ├── src/main.rs       全部 Rust 逻辑：窗口定位、区域裁剪、置顶、悬停、WS、全局钩子、托盘
@@ -70,7 +71,7 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 └── 工具/                 构建与出包脚本
     ├── package.py        一键出包：散件 + 安装程序 + zip + 隐私扫描 + 核验
     ├── installer.nsi     NSIS 安装脚本（中文界面、免管理员、HKCU 卸载登记）
-    └── smoke-test.js     前端冒烟测试（10 项断言，改前端后跑一下）
+    └── smoke-test.js     前端冒烟测试（15 项断言，改前端后跑一下）
 ```
 
 ---
@@ -79,8 +80,8 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 
 1. **两个页面共享一套模块**：`index.html`（浏览器演示）/ `shell.html`（桌面壳）。
    改 `src/` 或 `style.css` 两边都会变。
-2. **`build.rs` 固定从工程根同步** `index.html` / `shell.html` / `style.css` / `src/` 到 `dist/`，
-   Tauri 再把 `dist/` 嵌进 exe → 这四个**必须在工程根**。
+2. **`build.rs` 固定从工程根同步** `index.html` / `shell.html` / `settings.html` / `unlock.html` /
+   `style.css` / `src/` 到 `dist/`，Tauri 再把 `dist/` 嵌进 exe → 这几个**必须在工程根**。
 3. **窗口不是一整块**：窗口覆盖 78→1290（逻辑像素），但用 Win32 `SetWindowRgn`
    裁成「左海面卡 + 右粒子卡」两块圆角区域，**中间挖空**——既不遮挡任务栏图标，也不拦点击。
 4. **置顶靠抢层**：任务栏本身也是置顶窗口，点击时会压住我们 → 用
@@ -98,6 +99,14 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
    （注意：本地 WebSocket 是**单客户端**通道，设置面板不能复用它——会把主窗口挤掉。）
 10. **避让规则集中在 Rust**：任务栏图标遮挡（`measure_layout` 算图标组右缘）、
    全屏应用 / 自动隐藏 / shell 浮出层（`spawn_visibility_guard` 统一掩码）都在 `main.rs` 里。
+11. **成就 = 逐级「放生」几何体**：成就区永久陈列自转的彭罗斯三角（未集齐时半透明）；
+    每升一级把对应几何体加入随机浮出池，并经 `show_unlock` 命令在右下角弹一张小卡片。
+    **解锁级别完全由累计数派生**（`levelFor(total)`），存档里的级别字段只读不认 ——
+    否则一改阶梯，旧数字就失真，随机池会放出「还不到阶段」的几何体。
+    阶梯表在 `config.js` 的 `levels`；其中 `pool: false` 的级别只做荣誉、不放生几何体。
+12. **窗口必须预创建**：`WebviewWindowBuilder::build()` 只能在事件循环（主）线程调用，
+    子线程调用会让**进程直接退出**；操作已有窗口（hide/show/eval）才是线程安全的。
+    设置面板与解锁弹窗都在启动时预创建好并隐藏，之后只做 show/hide。
 
 ---
 
