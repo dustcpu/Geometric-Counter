@@ -38,12 +38,16 @@
     margin: 0 0 8px; font-size: 11px; font-weight: 600;
     color: var(--fg-dim); letter-spacing: 1.4px; text-transform: uppercase;
   }
-  .row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 5px 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 5px 0; }
   .row + .row { border-top: 1px solid var(--line); }
+  /* 主题那行按钮多（6 个），改成「标签在上、控件占满整行」免得横向溢出 */
+  .row.col { flex-direction: column; align-items: stretch; gap: 5px; }
+  .row.col .seg { justify-content: space-between; }
+  .row.col .seg button { flex: 1; text-align: center; }
   label { color: var(--fg); font-size: 12.5px; }
   label b { color: var(--accent); font-weight: 600; margin-left: 2px; }
 
-  .seg { display: flex; gap: 2px; background: rgba(0, 0, 0, .22); border-radius: 7px; padding: 2px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 2px; background: rgba(0, 0, 0, .22); border-radius: 7px; padding: 2px; }
   .seg button {
     border: 0; background: transparent; color: var(--fg-dim);
     font: inherit; font-size: 12px; padding: 3px 9px; border-radius: 5px;
@@ -92,7 +96,7 @@
 
   <section>
     <h2>外观</h2>
-    <div class="row">
+    <div class="row col">
       <label>主题</label>
       <div class="seg" id="segTheme">
         <button data-v="auto">自动</button>
@@ -243,6 +247,8 @@
     S.scale = Number(S.scale) || DEFAULTS.scale;
     S.trail = String(S.trail) === '0' ? 0 : 1;
     paintAll();
+  }).catch(function () {
+    paintAll();     // 拉不到设置（比如直接用浏览器打开预览）也按默认值渲染
   });
 
   bindSeg('segTheme', 'theme');

@@ -204,7 +204,7 @@ fn open_settings(app: &tauri::AppHandle) {
         tauri::WebviewUrl::App("settings.html".into()),
     )
     .title("几何任务栏小插件 · 设置")
-    .inner_size(380.0, 560.0)
+    .inner_size(520.0, 700.0)
     .resizable(false)
     .center()
     .build();
