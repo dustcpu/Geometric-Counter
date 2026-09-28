@@ -1,7 +1,8 @@
 # 几何任务栏小插件 · 源码说明
 
 > 本目录是完整可编译的工程（纯前端 + Rust/Tauri 桌面壳）。
-> **已做隐私过滤**：作者本机的用户名与路径都换成了占位符，你需要按自己的环境改回来（见第一节）。
+> **已做隐私过滤**：作者本机的用户名与路径都换成了占位符。只有 `src-tauri\.cargo\config.toml`
+> 里那两行需要你改成自己的路径（见第一节）；其余脚本会按自身位置自动识别工程根，不用改。
 
 ---
 
@@ -19,11 +20,11 @@
 ### 三步跑起来
 
 1. **把整个 `源码\` 目录拷到你的工作位置**，例如 `C:\path\to\geometric-ocean`
-2. **改掉路径占位符**（本包已把作者路径替换为占位符）：
-   - `src-tauri\.cargo\config.toml` → 把 `--remap-path-prefix` 两行改成你自己的路径
+2. **改掉路径占位符**（只有一处）：
+   - `src-tauri\.cargo\config.toml` → 把 `--remap-path-prefix` 两行改成你自己的用户目录与工程目录
      （这两行是干嘛的见第四节，**别直接删**）
-   - `工具\package.py` → `ROOT` 改成你的工程目录
-   - `工具\installer.nsi` → 一般不用改（路径由 `package.py` 传入，有兜底默认值）
+   - `工具\package.py`、`工具\installer.nsi` **不用改**：脚本会按自身所在位置推断工程根，
+     放在任何目录下都能直接跑
 3. **编译**：
 
 ```bat
@@ -40,6 +41,7 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 | **2b** | `geometric-ocean.exe --global` | 全局键盘钩子 + 本地 WebSocket(127.0.0.1:27183) + `Ctrl+Shift+Q` + 鼠标穿透 |
 
 > 想直接用：把 `工具\package.py` 跑一遍就会出免安装包与安装程序（见 `工具\` 说明）。
+> **没装 NSIS 也能跑**——会跳过安装程序、只出免安装 zip（想装：`winget install NSIS.NSIS`）。
 
 ---
 
@@ -67,11 +69,13 @@ rem 产物：src-tauri\target\release\geometric-ocean.exe
 │   ├── build.rs          编译前把根目录的前端文件同步到 dist/（Tauri 需要纯前端目录）
 │   ├── tauri.conf.json   窗口与打包配置
 │   ├── .cargo/config.toml 编译参数（路径重写，见第四节）
-│   └── icons/icon.ico    图标
-└── 工具/                 构建与出包脚本
+│   └── icons/            程序图标 icon.ico + 托盘图标 tray.png
+└── 工具/                 构建与出包脚本（与工程里的 `.workbuddy/devtools/` 同一份，
+    │                     脚本按自身位置推断工程根，两处都能直接跑；**别手改这里的副本**）
     ├── package.py        一键出包：散件 + 安装程序 + zip + 隐私扫描 + 核验
+    │                     （缺 NSIS 时自动跳过安装程序，缺隐私扫描器时跳过闸门——都能出免安装 zip）
     ├── installer.nsi     NSIS 安装脚本（中文界面、免管理员、HKCU 卸载登记）
-    └── smoke-test.js     前端冒烟测试（15 项断言，改前端后跑一下）
+    └── smoke-test.js     前端冒烟测试（16 项断言，改前端后跑一下）
 ```
 
 ---

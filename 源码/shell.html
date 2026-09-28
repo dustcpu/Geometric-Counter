@@ -200,6 +200,7 @@ window.onerror = function (msg, src, line) {
     var dispTotal = GOW.achievements.stats().total;
     var dispToday = GOW.achievements.stats().today.count;
     var lastTotalTxt = '';
+    var lastBadgeColor = '', lastTotalColor = '';   // 颜色写入守卫（见主循环末尾）
 
     // ---- 键盘数据源（自动选择）----
     // 2a（默认）：WS 不在线 → 回退页面内键盘（点击窗口获取焦点后敲键有效）
@@ -366,8 +367,11 @@ window.onerror = function (msg, src, line) {
           totalEl.textContent = txt;
         }
 
-        badgesEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.95);
-        totalEl.style.color = GOW.theme.rgb(GOW.theme.display.solid, 0.9);
+        // 颜色只在真的变了才写（原实现每帧写 2 次 style → 60×2 次/秒无谓的样式失效）
+        var colB = GOW.theme.rgb(GOW.theme.display.solid, 0.95);
+        if (colB !== lastBadgeColor) { lastBadgeColor = colB; badgesEl.style.color = colB; }
+        var colT = GOW.theme.rgb(GOW.theme.display.solid, 0.9);
+        if (colT !== lastTotalColor) { lastTotalColor = colT; totalEl.style.color = colT; }
       } catch (e) {
         // 崩溃哨兵：首个异常写进窗口标题供探针远程读取，后续静默丢帧
         try {

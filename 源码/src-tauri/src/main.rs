@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::sync::Mutex;
 
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, PhysicalPosition};
 
@@ -468,11 +468,7 @@ fn apply_layout(win: &tauri::WebviewWindow, lay: Layout, rev: u32) {
     }
 
     // 3) 通知渲染层（页面按这个重设画布与区域）
-    let js = format!(
-        "window.__LAYOUT={{rev:{},winX:{},winW:{},zoneX:{},zoneW:{},rightX:{},rightW:{}}};",
-        rev, lay.win_x, lay.win_w, lay.zone_x, lay.zone_w, lay.right_x, lay.right_w
-    );
-    let _ = win.eval(&js);
+    push_layout(win, &lay, rev);
 
     // 4) 诊断（仅布局变化时写）
     let dbg = format!(
@@ -482,21 +478,43 @@ fn apply_layout(win: &tauri::WebviewWindow, lay: Layout, rev: u32) {
     let _ = std::fs::write(diag_path("ocean-layout.txt"), dbg);
 }
 
-/// 布局看门狗：每 2s 复测一次（任务栏/分辨率/图标数变化都能自愈），
-/// 同时把布局重推给渲染层（兼容页面晚加载）。
+/// 只把布局推给渲染层，**不碰窗口几何**（尺寸/位置/区域都不动）。
+/// 看门狗在「布局没变」的那几轮走这条：一条 eval 很便宜，又兼容页面晚加载。
+#[cfg(windows)]
+fn push_layout(win: &tauri::WebviewWindow, lay: &Layout, rev: u32) {
+    let js = format!(
+        "window.__LAYOUT={{rev:{},winX:{},winW:{},zoneX:{},zoneW:{},rightX:{},rightW:{}}};",
+        rev, lay.win_x, lay.win_w, lay.zone_x, lay.zone_w, lay.right_x, lay.right_w
+    );
+    let _ = win.eval(&js);
+}
+
+/// 布局看门狗：每 2s 复测一次（任务栏/分辨率/图标数变化都能自愈）。
+/// ★ 2026-09-28 性能优化：不再每轮都动窗口几何 ——
+///   布局**变了**才 set_size/set_position/SetWindowRgn；没变只推一条 __LAYOUT（便宜、兼容页面晚加载）。
+///   另每 15 轮（30s）无条件重申一次几何，作为「区域被外部改动」之类的兜底自愈。
 #[cfg(windows)]
 fn spawn_layout_watch(win: &tauri::WebviewWindow) {
     let w = win.clone();
     std::thread::spawn(move || {
         let mut rev: u32 = 0;
         let mut last: Option<Layout> = None;
+        let mut ticks: u32 = 0;
         loop {
             let lay = measure_layout(&w);
-            if last != Some(lay) {
+            let changed = last != Some(lay);
+            if changed {
                 rev += 1;
                 last = Some(lay);
+                ticks = 0;
+            } else {
+                ticks += 1;
             }
-            apply_layout(&w, lay, rev);
+            if changed || ticks % 15 == 0 {
+                apply_layout(&w, lay, rev);
+            } else {
+                push_layout(&w, &lay, rev);
+            }
             std::thread::sleep(std::time::Duration::from_millis(2000));
         }
     });
@@ -571,6 +589,12 @@ fn save_settings(app: tauri::AppHandle, json: String) -> Result<(), String> {
     std::fs::write(settings_file(), &t).map_err(|e| e.to_string())?;
     if let Some(main) = app.get_webview_window("ocean") {
         let _ = main.eval(&format!("window.__OCEAN_SETTINGS = {};", t));
+    }
+    // 开机自启：仅当本次提交含该字段才动注册表（避免其它设置改动误触发）
+    if let Some(on) = settings_autostart(&t) {
+        if let Err(e) = apply_autostart(on) {
+            diag_log(&format!("autostart 应用失败：{}", e));
+        }
     }
     Ok(())
 }
@@ -921,13 +945,65 @@ fn spawn_ws_server() {
     });
 }
 
-// 程序化生成托盘图标（32×32 纯色海蓝），避免引入图标文件依赖
+// 托盘图标：内嵌 icons/tray.png（32×32 彭罗斯三角，与 exe 图标同源）；
+// 解码失败则退回旧版纯色海蓝方块（兜底，正常走不到）
 fn default_icon() -> tauri::image::Image<'static> {
+    if let Ok(img) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+        return img;
+    }
     let mut rgba = vec![0u8; 32 * 32 * 4];
     for px in rgba.chunks_mut(4) {
         px.copy_from_slice(&[115, 170, 225, 255]);
     }
     tauri::image::Image::new_owned(rgba, 32, 32)
+}
+
+// ---- 开机自启（HKCU 启动项，零额外依赖，HKCU 不需要管理员）----
+#[cfg(windows)]
+fn apply_autostart(enable: bool) -> Result<(), String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe = exe.to_string_lossy().into_owned();
+    let value = format!("\"{}\" --global", exe); // 带 --global，登录后直接进全局键盘模式
+    let key = "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    let args: Vec<&str> = if enable {
+        vec!["add", key, "/v", "GeometricCounter", "/t", "REG_SZ", "/d", &value, "/f"]
+    } else {
+        vec!["delete", key, "/v", "GeometricCounter", "/f"]
+    };
+    let verb = if enable { "add" } else { "delete" };
+    let out = std::process::Command::new("reg")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("执行 reg.exe 失败：{}", e))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    // 删除时若该键本就不存在（重装 / 从未开启），视为成功（幂等）
+    if !enable {
+        return Ok(());
+    }
+    let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(format!("reg {} 失败：{}", verb, msg))
+}
+
+#[cfg(not(windows))]
+fn apply_autostart(_enable: bool) -> Result<(), String> {
+    Ok(())
+}
+
+/// 从设置 JSON 里抠出 autostart 字段（页面可能发 0/1 或 true/false）
+fn settings_autostart(json: &str) -> Option<bool> {
+    let marker = "\"autostart\"";
+    let pos = json.find(marker)?;
+    let rest = json[pos + marker.len()..].trim_start();
+    let rest = rest.strip_prefix(':')?.trim_start();
+    if rest.starts_with('1') || rest.starts_with("true") {
+        Some(true)
+    } else if rest.starts_with('0') || rest.starts_with("false") {
+        Some(false)
+    } else {
+        None
+    }
 }
 
 fn main() {
@@ -953,6 +1029,15 @@ fn main() {
             // 同时兼作分辨率与 DPI 变化重定位（看门狗每 2s 复测）
             #[cfg(windows)]
             {
+                // ★ 先同步测一次布局并落到窗口上，再 show（2026-09-28 修）：
+                //   窗口在 tauri.conf.json 里以 visible:false 创建。若直接 show 再等看门狗线程定位，
+                //   启动瞬间它会在系统默认位置（屏幕中上部）露一下、再跳到任务栏 —— Dust 实测到这个闪跳。
+                //   catch_unwind 兜住：万一量测出岔子也必须走到下面的 show()，
+                //   绝不能出现「窗口永远不显示」这种更糟的失败模式。
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let first = measure_layout(&win);
+                    apply_layout(&win, first, 0);
+                }));
                 spawn_layout_watch(&win);
                 spawn_hover_watch(&win);
                 spawn_visibility_guard(&win);
@@ -1011,18 +1096,29 @@ fn main() {
             }
 
             // ---- 托盘：三层退出之第 2 层（暂停 / 恢复 / 退出）----
-            let toggle = MenuItem::with_id(app, "toggle", "暂停 / 恢复监听", true, None::<&str>)?;
+            // 2026-09-28：暂停项改成**勾选态**（勾上 = 已暂停）——
+            // 原先文案「暂停 / 恢复监听」看不出当前到底是哪种状态。
+            let toggle = CheckMenuItem::with_id(
+                app, "toggle", "暂停监听", true,
+                PAUSED.load(Ordering::Relaxed), None::<&str>,
+            )?;
             let settings = MenuItem::with_id(app, "settings", "设置…（也可双击海面）", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle, &settings, &quit])?;
+            let menu_for_click = menu.clone();   // 点击时要按 id 找回勾选项同步状态
             TrayIconBuilder::with_id("main")
                 .icon(default_icon())
                 .tooltip("几何任务栏小插件")
                 .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
+                .on_menu_event(move |app, event| match event.id().as_ref() {
                     "toggle" => {
                         let now = !PAUSED.load(Ordering::Relaxed);
                         PAUSED.store(now, Ordering::Relaxed);
+                        if let Some(tauri::menu::MenuItemKind::Check(item)) =
+                            menu_for_click.get("toggle")
+                        {
+                            let _ = item.set_checked(now);
+                        }
                     }
                     "settings" => open_settings(app),
                     "quit" => app.exit(0),
@@ -1131,6 +1227,15 @@ fn main() {
                 Ok(Err(e)) => diag_log(&format!("unlock: pre-create failed: {}", e)),
                 Err(_) => diag_log("unlock: pre-create PANICKED（已拦截，主程序继续；弹窗不可用）"),
             }
+
+            // ---- 开机自启：按已保存设置对齐注册表（开启则用当前 exe 路径写入）----
+            let saved = read_settings();
+            if let Some(on) = settings_autostart(&saved) {
+                if let Err(e) = apply_autostart(on) {
+                    diag_log(&format!("autostart 启动对齐失败：{}", e));
+                }
+            }
+
             Ok(())
         })
         .build(tauri::generate_context!())

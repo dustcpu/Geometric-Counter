@@ -11,9 +11,13 @@ path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+# 同上（2026-09-28）：构建期依赖图里也有 schemars（tauri-build → tauri-utils → schemars），
+# 而 resolver v2 下 build-dependencies 与普通依赖的 feature **不合并** ——
+# 只加在 [dependencies] 管不到它，必须在这里也把 indexmap 1.x 的 std 打开。
+indexmap = { version = "1.9", features = ["std"] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -22,3 +26,10 @@ tungstenite = "0.24"
 # 全局键盘钩子（2b 用；设计文档推荐的 tauri-plugin-user-input 会把原始键码
 # 发往 webview，违反「keycode 不出 Rust 侧」的隐私红线，故用 rdev 本地映射）
 rdev = "0.5"
+# 冷编译修复（2026-09-28）：schemars 0.8.22（tauri-utils 的传递依赖）把 Map 定义成
+#   `indexmap::IndexMap<K, V>`，而 indexmap 1.9.3 只在 std feature 下才给 S 默认值
+#   （无 std 时是 `IndexMap<K, V, S>`，缺第三个泛型 → E0107）。
+# indexmap 1.9.3 自身没有 default feature，schemars 也没请求 std，故在此显式依赖
+# 同一主版本并打开 std —— 只为在 feature 合并时补上 std，代码里并不使用它。
+# （此前没暴露是因为一直用早先编好的暖缓存，冷编译必挂。）
+indexmap = { version = "1.9", features = ["std"] }

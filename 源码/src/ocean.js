@@ -32,6 +32,26 @@ GOW.ocean = (function () {
     }
   })();
 
+  // ---- 渐隐画笔缓存（2026-09-28 性能优化）----
+  // 渐变只由「海面区域 + 主题水色 + 浓度」决定，而这三者基本不变；
+  // 原实现每帧重建 6 个 CanvasGradient + 12 次 addColorStop，纯属浪费。
+  // 以 key 缓存，key 一变（换主题/换布局）整批作废重建——最多 5 条，代价可忽略。
+  var brushCache = {};
+  function fadeBrush(ctx, zx, zw, a) {
+    var key = a + '|' + zx + '|' + zw + '|' + cfg.waterColor.join(',');
+    var g = brushCache[key];
+    if (!g) {
+      brushCache = {};
+      g = ctx.createLinearGradient(zx, 0, zx + zw, 0);
+      g.addColorStop(0, GOW.theme.rgb(cfg.waterColor, 0));
+      g.addColorStop(0.1, GOW.theme.rgb(cfg.waterColor, a));
+      g.addColorStop(0.9, GOW.theme.rgb(cfg.waterColor, a));
+      g.addColorStop(1, GOW.theme.rgb(cfg.waterColor, 0));
+      brushCache[key] = g;
+    }
+    return g;
+  }
+
   // ---- 背景层：波浪线 ----
   function drawWaves(ctx, t) {
     var zx = cfg.zone.x, zw = cfg.zone.width;
@@ -43,13 +63,8 @@ GOW.ocean = (function () {
     for (var i = 0; i < waveLines.length; i++) {
       var w = waveLines[i];
       var a = 0.18 * (1 - i * 0.28);   // 近浓远淡（每线独立浓度）
-      // 水平渐隐画笔：浓度直接写入渐变端点（两端 10% 溶解，中段保持该线浓度）
-      var g = ctx.createLinearGradient(zx, 0, zx + zw, 0);
-      g.addColorStop(0, GOW.theme.rgb(cfg.waterColor, 0));
-      g.addColorStop(0.1, GOW.theme.rgb(cfg.waterColor, a));
-      g.addColorStop(0.9, GOW.theme.rgb(cfg.waterColor, a));
-      g.addColorStop(1, GOW.theme.rgb(cfg.waterColor, 0));
-      ctx.strokeStyle = g;
+      // 水平渐隐画笔：浓度写入渐变端点（两端 10% 溶解，中段保持该线浓度）→ 走缓存
+      ctx.strokeStyle = fadeBrush(ctx, zx, zw, a);
       ctx.beginPath();
       for (var x = zx; x <= zx + zw; x += 4) {
         var y = w.base
@@ -72,12 +87,8 @@ GOW.ocean = (function () {
     ctx.lineCap = 'round';
     for (var layer = 0; layer < 2; layer++) {
       var a = layer === 0 ? 0.4 : 0.15;
-      // 每层独立渐隐画笔（浓度写入端点）
-      var g = ctx.createLinearGradient(zx, 0, zx + zw, 0);
-      g.addColorStop(0, GOW.theme.rgb(cfg.waterColor, 0));
-      g.addColorStop(0.1, GOW.theme.rgb(cfg.waterColor, a));
-      g.addColorStop(0.9, GOW.theme.rgb(cfg.waterColor, a));
-      g.addColorStop(1, GOW.theme.rgb(cfg.waterColor, 0));
+      // 每层独立渐隐画笔（浓度写入端点）→ 走缓存
+      var g = fadeBrush(ctx, zx, zw, a);
       ctx.beginPath();
       for (var x = zx; x <= zx + zw; x += 4) {
         var y = wy

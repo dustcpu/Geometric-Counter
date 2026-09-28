@@ -153,6 +153,18 @@
   </section>
 
   <section>
+    <h2>系统</h2>
+    <div class="row">
+      <label>开机自启</label>
+      <div class="seg" id="segAuto">
+        <button data-v="1">开</button>
+        <button data-v="0">关</button>
+      </div>
+    </div>
+    <p class="hint">开启后登录 Windows 自动启动（写入「启动」项，可在任务管理器「启动」标签页里管理）。默认关闭。</p>
+  </section>
+
+  <section>
     <h2>数据</h2>
     <div class="row">
       <label>打字统计</label>
@@ -163,7 +175,7 @@
 
   <footer>
     <span id="saveState"></span>
-    <a href="https://github.com/dustcpu/Geometric-Counter" target="_blank" rel="noopener">v0.1.1 · MIT</a>
+    <a href="https://github.com/dustcpu/Geometric-Counter" target="_blank" rel="noopener">v0.1.3 · MIT</a>
   </footer>
 </div>
 
@@ -177,7 +189,8 @@
     speed: 1,
     scale: 0.32,
     trail: 1,
-    hud: 'full'
+    hud: 'full',
+    autostart: 0
   };
   var S = Object.assign({}, DEFAULTS);
   var saveState = document.getElementById('saveState');
@@ -214,6 +227,7 @@
     paintSeg('segSpeed', String(S.speed));
     paintSeg('segTrail', String(S.trail));
     paintSeg('segHud', S.hud);
+    paintSeg('segAuto', String(S.autostart));
     document.getElementById('idle').value = S.idleTime;
     document.getElementById('idleVal').textContent = Number(S.idleTime).toFixed(1) + ' 秒';
   }
@@ -246,6 +260,7 @@
     S.speed = Number(S.speed) || 1;
     S.scale = Number(S.scale) || DEFAULTS.scale;
     S.trail = String(S.trail) === '0' ? 0 : 1;
+    S.autostart = String(S.autostart) === '1' ? 1 : 0;
     paintAll();
   }).catch(function () {
     paintAll();     // 拉不到设置（比如直接用浏览器打开预览）也按默认值渲染
@@ -256,6 +271,7 @@
   bindSeg('segSpeed', 'speed');
   bindSeg('segTrail', 'trail');
   bindSeg('segHud', 'hud');
+  bindSeg('segAuto', 'autostart');
 
   var idle = document.getElementById('idle');
   idle.addEventListener('input', function () {

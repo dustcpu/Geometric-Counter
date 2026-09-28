@@ -255,4 +255,31 @@ assert.deepStrictEqual(GOW.achievements.stats().zones, {}, 'reset 后分区统�
 assert.ok(savedSeen && savedSeen.total === 0, 'reset 应立即落盘（存档被覆盖为 0）');
 console.log('✓ 重置统计：计数/徽章/分区归零且立即落盘');
 
+// ★ 回归断言（2026-09-28 事故）：工作目录曾被「分享包里的去隐私源码」整片覆盖，
+//   导致图标退回占位坏文件、托盘图标退回蓝方块、开机自启功能消失、隐私路径重写被换成占位符。
+//   这里做最低限度的「发布件一致性」守卫，任何一项回滚都会当场报错。
+var rootDir = path.join(__dirname, '..', '..');
+
+var settingsHtml = fs.readFileSync(path.join(rootDir, 'settings.html'), 'utf8');
+['segAuto', 'bindSeg(\'segAuto\''].forEach(function (needle) {
+  assert.ok(settingsHtml.indexOf(needle) !== -1, 'settings.html 缺少开机自启接线：' + needle);
+});
+assert.ok(settingsHtml.indexOf('autostart: 0') !== -1, '开机自启默认值必须是 0（关闭）');
+
+var mainRs = fs.readFileSync(path.join(rootDir, 'src-tauri', 'src', 'main.rs'), 'utf8');
+['fn apply_autostart', 'fn settings_autostart', 'include_bytes!("../icons/tray.png")']
+  .forEach(function (needle) {
+    assert.ok(mainRs.indexOf(needle) !== -1, 'main.rs 缺少：' + needle);
+  });
+
+// 图标文件不能是 126 字节的占位坏文件（真实的多尺寸彭罗斯图标约 47 KB）
+var icoSize = fs.statSync(path.join(rootDir, 'src-tauri', 'icons', 'icon.ico')).size;
+assert.ok(icoSize > 1000, 'icon.ico 疑似占位坏图标（当前 ' + icoSize + ' 字节）');
+
+// 隐私红线：两行 --remap-path-prefix 必须都在（值可以是占位符——分享包本来就该是占位符）
+var cargoCfgText = fs.readFileSync(path.join(rootDir, 'src-tauri', '.cargo', 'config.toml'), 'utf8');
+assert.strictEqual((cargoCfgText.match(/--remap-path-prefix=/g) || []).length, 2,
+  '.cargo/config.toml 必须保留两行 --remap-path-prefix');
+console.log('✓ 发布件一致性（开机自启接线 / 托盘图标 / 图标文件 / 隐私路径重写）');
+
 console.log('\n全部通过 ✔');
